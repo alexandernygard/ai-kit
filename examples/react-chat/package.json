@@ -1,0 +1,35 @@
+{
+  "name": "example-react-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.ts & vite",
+    "server": "node server.ts",
+    "web": "vite",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.82",
+    "@alexandernygard/ai-kit": "workspace:*",
+    "@alexandernygard/ai-kit-ai-sdk": "workspace:*",
+    "@alexandernygard/ai-kit-claude-agent": "workspace:*",
+    "@alexandernygard/ai-kit-node": "workspace:*",
+    "@alexandernygard/ai-kit-react": "workspace:*",
+    "@alexandernygard/ai-kit-server": "workspace:*",
+    "@alexandernygard/components": "^0.1.4",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.303",
+    "ai": "^7.0.143",
+    "lucide-react": "^1.59.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.4"
+  }
+}

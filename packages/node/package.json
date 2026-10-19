@@ -1,0 +1,39 @@
+{
+  "name": "@alexandernygard/ai-kit-node",
+  "version": "0.1.0",
+  "description": "Node.js pieces for ai-kit: file store, SKILL.md loader, worker sandbox for code mode, file and shell tools, node:http adapter.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Alexander Nyg\u00e5rd",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "ai-kit-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^"
+  },
+  "devDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^",
+    "@types/node": "^26.6.5",
+    "@alexandernygard/ai-kit-server": "workspace:^"
+  }
+}

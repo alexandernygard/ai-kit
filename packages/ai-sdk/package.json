@@ -1,0 +1,36 @@
+{
+  "name": "@alexandernygard/ai-kit-ai-sdk",
+  "version": "0.1.0",
+  "description": "ai-kit model driver for the AI SDK: Anthropic, OpenAI, Google, Gateway and every other AI SDK provider.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Alexander Nyg\u00e5rd",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "ai-kit-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^",
+    "ai": "^7.0.0"
+  },
+  "devDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^",
+    "ai": "^7.0.143"
+  }
+}

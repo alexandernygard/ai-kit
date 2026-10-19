@@ -1,0 +1,4 @@
+- Passport or ID
+- Charger and adapter
+- Rain jacket (it's Norway)
+- Comfortable shoes

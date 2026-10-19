@@ -1,0 +1,104 @@
+# Frontend
+
+ai-kit is headless. Use `@alexandernygard/components` (or anything else) for the visuals; ai-kit gives you state, events and grouping.
+
+## The Chat controller
+
+`Chat` (client package) holds one session's state and does the work a chat UI needs:
+
+- sends optimistically and creates the session on the first message
+- streams, and reconnects from the last `seq` if the connection drops
+- joins a run already in progress when you open a session
+- answers approvals and client tools: live runs get `respond`, suspended ones are batched and resumed once
+- runs `clientTools` as soon as the agent calls them
+- regenerates, edits, switches branches (`versions()` for "2 / 3"), forks
+
+```ts
+const chat = new Chat({ transport: httpTransport({ baseUrl: "/api/ai" }), newSession: { agent: "support" } })
+chat.subscribe((state) => render(state))   // { sessionId, session, messages, headId, path, status, error, runId, pending }
+await chat.send("Hello")
+```
+
+`status` is `idle`, `loading`, `submitted`, `streaming`, `awaiting-input` or `error`. `pending` holds the tool calls waiting on the user.
+
+## React
+
+```tsx
+<AIKitProvider baseUrl="/api/ai">...</AIKitProvider>
+
+const chat = useChat({ sessionId, newSession: { agent: "support" }, onSessionCreated: (s) => navigate(`/c/${s.id}`), clientTools })
+const { sessions, create, rename, remove, loadMore } = useSessions()
+const { agents } = useAgents()
+```
+
+`useChat` returns the state plus `send`, `stop`, `approve`, `deny`, `submitToolOutput`, `regenerate`, `edit`, `switchBranch`, `versions`, `fork`, `reset` and `isRunning`. Change `sessionId` to switch sessions, or set it to `undefined` for a new chat.
+
+## Svelte
+
+`Chat` follows the Svelte store contract, so it works with `$`:
+
+```svelte
+<script lang="ts">
+  import { Chat, httpTransport } from "@alexandernygard/ai-kit-client"
+  const chat = new Chat({ transport: httpTransport(), newSession: { agent: "support" } })
+</script>
+
+{#each $chat.path as message (message.id)}
+  <MessageView {message} />
+{/each}
+<Composer busy={$chat.status === "streaming"} onsubmit={(text) => chat.send(text)} />
+```
+
+## Rendering messages
+
+`segments(message)` groups parts the way chat UIs show them:
+
+- `text` and `reasoning` blocks
+- `tools`: consecutive tool calls as one group for a trace, with code-mode calls nested in `children` and a subagent's live message on `child`
+- `file` and `data` parts (`data` is for your own `ctx.emit` UIs, plus `todos`)
+
+`MessageParts` in the React package is a headless renderer on top of it, with a per-tool-name escape hatch:
+
+```tsx
+<MessageParts message={m} render={{
+  text: (p) => <Bubble variant="ghost"><BubbleContent>{p.text}</BubbleContent></Bubble>,
+  reasoning: (p) => <ThoughtTrace text={p.text} />,
+  tools: (tools) => <ToolTrace tools={tools} />,
+  tool: { ask_user: (t) => <AskUser call={t} />, get_weather: (t) => <WeatherCard data={t.output} /> },
+  data: { chart: (p) => <Chart spec={p.data} /> },
+}} />
+```
+
+Helpers: `toolLabel(t)` ("Booking DY612 (needs approval)"), `isToolActive(t)`, `toolDuration(t)`, `todosOf(path)`, `sourcesOf(message)`.
+
+## Patterns with @alexandernygard/components
+
+[examples/react-chat](../examples/react-chat/src/App.tsx) has all of these working:
+
+| Pattern | Components | ai-kit |
+| --- | --- | --- |
+| Message list that sticks to the bottom | `MessageScroller*`, `Message`, `Bubble` | `chat.path` |
+| "Thinking" before the first token | `Marker` + `Spinner` with `shimmer` | `chat.isRunning` and the last message has no parts |
+| Tool activity | `Trace`, `TraceLine status="running" \| "error"`, `TraceCollapsible` + `CodeBlock` for input and output | `segments()` tools, `toolLabel`, `toolDuration`, `isToolActive` |
+| Code mode | nested `Trace` under the `run_code` line | `ToolNode.children` |
+| Subagents | a `Trace` line with the child's text | `ToolNode.child` (`nestSubagents`) |
+| Reasoning | `TraceCollapsible` "Thought" | `reasoning` segments |
+| Approval | `Card` with `CodeBlock` input, Approve / Always allow / Deny | `t.state === "awaiting-approval"`, `approve`, `deny` |
+| Ask the user | `Questionnaire` with choices and a free-text `QuestionnaireInput` | `ask_user` input, `submitToolOutput(id, { answers })` |
+| Task list | a checklist above the composer | `todosOf(chat.path)` |
+| Composer with stop | `InputGroup`, `InputGroupTextarea`, `InputGroupButton` | `send`, `stop`, `isRunning` |
+| Versions | ghost icon buttons and "2 / 3" | `versions(id)`, `switchBranch` |
+| Regenerate, fork | icon buttons in `MessageFooter` | `regenerate(id)`, `fork(id)` |
+| Session sidebar | buttons or `Sidebar` | `useSessions()` |
+| Attachments | `Attachment` | `composeParts(text, files)` |
+
+If a pattern keeps coming back, build it in the component library (for example a `ToolTrace` or `ApprovalCard` that takes plain props) and keep ai-kit headless.
+
+## Running the kit in the browser
+
+`directTransport(kit)` gives the same API with no server. Use it for local-first apps with a browser-safe model (a proxy, or an in-browser model driver), Electron and tests:
+
+```ts
+const kit = createKit({ agents: [agent], store: kvStore(indexedDbKV) })
+const chat = new Chat({ transport: directTransport(kit, { context }) })
+```

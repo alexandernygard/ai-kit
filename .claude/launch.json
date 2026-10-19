@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "example-api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["examples/react-chat/server.ts"],
+      "port": 8787
+    },
+    {
+      "name": "example-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "example-react-chat", "web", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

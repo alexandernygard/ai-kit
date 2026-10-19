@@ -1,0 +1,41 @@
+{
+  "name": "@alexandernygard/ai-kit-codex",
+  "version": "0.1.0",
+  "description": "ai-kit harness driver for the OpenAI Codex SDK. Runs agents on Codex, with your ChatGPT subscription or an API key.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Alexander Nygård",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "ai-kit-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@alexandernygard/ai-kit-mcp": "workspace:^"
+  },
+  "peerDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^",
+    "@openai/codex-sdk": ">=0.160.0"
+  },
+  "devDependencies": {
+    "@alexandernygard/ai-kit": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@openai/codex-sdk": "^0.163.0",
+    "@types/node": "^26.6.5"
+  }
+}
