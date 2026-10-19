@@ -62,6 +62,8 @@ UI components live in [`@alexandernygard/components`](../component-library): `Me
 - Built-ins: `ask_user` (multiple-choice questions), `todo_write` (a live checklist), `memory` (notes that persist across sessions).
 
 **Context** ([docs/context.md](docs/context.md))
+- Context providers attach live information to every call: the user, the time, what's on screen (`getContext` in the browser, kept separate as untrusted).
+- Context usage: every call reports tokens against the model's window, with a breakdown, for a "62% of context" meter.
 - Progressive tool disclosure: deferred tools and toolkits stay out of the prompt until `search_tools` finds them.
 - Code mode: tools become typed functions inside one `run_code` tool. The agent writes a script that loops and filters, and intermediate data never reaches the context. Runs in a worker sandbox.
 - Skills in the Agent Skills format (SKILL.md folders). Only names and descriptions sit in the prompt; the body, files and tools load on demand.

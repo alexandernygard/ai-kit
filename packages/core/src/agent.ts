@@ -9,11 +9,14 @@ import type { JSONSchema, Schema } from "./schema"
 import type { Skill } from "./skills"
 import type { ToolInput } from "./tools"
 import type { Command } from "./commands"
+import type { ContextProvider } from "./context-providers"
 
 export interface InstructionContext<Ctx = any> {
   agent: string
   sessionId: string
   context: Ctx
+  /** What the browser sent with the message. Untrusted. */
+  clientContext?: Record<string, unknown>
   state: Record<string, unknown>
 }
 
@@ -61,6 +64,8 @@ export interface AgentConfig<Ctx = any> {
   compaction?: false | CompactionOptions
   /** Structured output for every run of this agent. */
   output?: Schema | JSONSchema
+  /** Live information attached to every model call: the user, the page, the time. */
+  contextProviders?: ContextProvider<Ctx>[]
   /** Built-ins to add: `ask_user` and `todo_write`. */
   builtins?: { askUser?: boolean; todos?: boolean }
   /** Shown in UIs. */

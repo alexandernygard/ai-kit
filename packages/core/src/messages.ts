@@ -1,4 +1,5 @@
 import { createId, now } from "./id"
+import type { ContextUsage } from "./events"
 import type { Usage } from "./usage"
 
 export type Role = "user" | "assistant" | "system"
@@ -24,6 +25,8 @@ export interface Message<Meta = Record<string, unknown>> {
   model?: string
   status?: MessageStatus
   usage?: Usage
+  /** Latest context-window reading for this message's run. */
+  contextUsage?: ContextUsage
   metadata?: Meta
 }
 

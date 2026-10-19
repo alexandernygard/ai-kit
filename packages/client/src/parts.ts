@@ -1,4 +1,4 @@
-import type { DataPart, FilePart, Message, ReasoningPart, SourcePart, TextPart, Todo, ToolPart } from "@alexandernygard/ai-kit"
+import type { ContextUsage, DataPart, FilePart, Message, ReasoningPart, SourcePart, TextPart, Todo, ToolPart } from "@alexandernygard/ai-kit"
 
 /** A tool call with the calls it made (code mode) attached. */
 export interface ToolNode extends ToolPart {
@@ -65,6 +65,11 @@ export function todosOf(messages: Message[]): Todo[] | undefined {
     if (part) return part.data
   }
   return undefined
+}
+
+/** The latest context-window reading in these messages. */
+export function contextUsageOf(messages: Message[]): ContextUsage | undefined {
+  return messages.findLast((m) => m.role === "assistant" && m.contextUsage)?.contextUsage
 }
 
 /** A short status line for a tool call: "Searching flights", "Waiting for approval". */

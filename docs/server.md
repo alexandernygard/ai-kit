@@ -12,10 +12,11 @@ const handler = createHandler(kit, {
   agents: ["support", "concierge"],          // which agents clients may use
   runOptions: ({ auth }) => ({ permissionMode: auth.context.user.admin ? "default" : "ask", limits: { maxCostUsd: 1 } }),
   cors: ["https://app.example.com"],
+  clientContext: { maxBytes: 16_384, transform: (value, auth) => value },   // or false
 })
 ```
 
-Sessions are owned by `userId`. Every route checks ownership, and another user's session answers 404. Clients can't set permissions, limits or context; those come from `auth` and `runOptions`.
+Sessions are owned by `userId`. Every route checks ownership, and another user's session answers 404. Clients can't set permissions, limits or `context`; those come from `auth` and `runOptions`. They can send `clientContext` with messages, which stays separate and is marked untrusted.
 
 ## Mounting
 
@@ -49,8 +50,8 @@ Runs keep going when a client disconnects. On platforms that stop work when the 
 | PATCH | `/sessions/:id` | `{ title?, metadata? }` | session |
 | DELETE | `/sessions/:id` | | 204 |
 | GET | `/sessions/:id/children` | | `{ sessions }` (subagents) |
-| POST | `/sessions/:id/messages` | `{ content, parentId?, editOf?, agent?, interrupt? }` | event stream |
-| POST | `/sessions/:id/resume` | `{ responses: { [toolCallId]: response } }` | event stream |
+| POST | `/sessions/:id/messages` | `{ content, clientContext?, parentId?, editOf?, agent?, interrupt? }` | event stream |
+| POST | `/sessions/:id/resume` | `{ responses: { [toolCallId]: response }, clientContext? }` | event stream |
 | POST | `/sessions/:id/respond` | `{ toolCallId, response }` | `{ live: true }` if a run took it, else event stream |
 | POST | `/sessions/:id/regenerate` | `{ messageId? }` | event stream |
 | POST | `/sessions/:id/fork` | `{ messageId?, title? }` | `{ session, messages }` |

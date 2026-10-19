@@ -29,6 +29,8 @@ export interface ClaudeAgentOptions {
   agents?: Options["agents"]
   maxTurns?: number
   maxBudgetUsd?: number
+  /** The model's context window, for context-usage readings. Default: from the model id. */
+  contextWindow?: number
   /**
    * Environment for the Claude Code process. To use your Claude subscription on a server, set
    * `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`; locally, `claude login` is enough.
@@ -61,6 +63,7 @@ export function claudeAgent(options: ClaudeAgentOptions = {}): HarnessDriver {
     kind: "harness",
     provider: "claude-agent",
     modelId: options.model,
+    contextWindow: options.contextWindow,
     handles: { compaction: true },
     run: (req) => runClaude(req, options),
   }

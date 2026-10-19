@@ -119,6 +119,10 @@ export function reduceMessage(message: Message, event: AgentEvent, options: Redu
       return withParts(message, [...message.parts, event.part])
     case "step-finish":
       return message
+    case "context-usage": {
+      const { type: _type, ...usage } = event
+      return { ...message, contextUsage: { ...usage, breakdown: usage.breakdown ?? message.contextUsage?.breakdown } }
+    }
     case "run-finish":
       return { ...event.message }
     case "error":

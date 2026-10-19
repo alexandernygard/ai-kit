@@ -1,5 +1,6 @@
 import {
   type AgentEvent,
+  type ContextUsage,
   type CreateSessionBody,
   createId,
   type EventEnvelope,
@@ -41,6 +42,8 @@ export interface ChatState {
   runId: string | null
   /** Tool calls waiting on the user: approvals and client tools without a handler. */
   pending: ToolPart[]
+  /** How full the model's context window is, from the latest answer on the active branch. */
+  contextUsage: ContextUsage | null
 }
 
 /** Runs a client tool in the browser. Return the output; throw to report an error. */
@@ -59,6 +62,12 @@ export interface ChatOptions {
    * agent continues once. `false` resumes after each answer.
    */
   batchResponses?: boolean
+  /**
+   * What the app knows that the agent should too, sent with every message: the current page,
+   * the selection, the open document. The server treats it as untrusted; agents see it through
+   * the `clientContext()` context provider.
+   */
+  getContext?: () => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
   /** Reconnect to a run when the stream drops. Default 3 attempts. */
   reconnectAttempts?: number
   onEvent?: (event: AgentEvent) => void
@@ -78,6 +87,7 @@ const initial = (sessionId: string | null): ChatState => ({
   error: null,
   runId: null,
   pending: [],
+  contextUsage: null,
 })
 
 /**
@@ -122,6 +132,7 @@ export class Chat {
     if (patch.messages || patch.headId !== undefined) {
       next.path = pathTo(next.messages, next.headId)
       next.pending = findPending(next.path.at(-1), this.options.clientTools)
+      next.contextUsage = next.path.findLast((m) => m.role === "assistant" && m.contextUsage)?.contextUsage ?? null
     }
     this.state = next
     for (const fn of this.listeners) fn(next)
@@ -168,7 +179,10 @@ export class Chat {
   // Sending
 
   /** Send a message. Resolves when the run ends. */
-  send(content: string | Part[], options: { parentId?: string | null; agent?: string; metadata?: Record<string, unknown> } = {}): Promise<void> {
+  send(
+    content: string | Part[],
+    options: { parentId?: string | null; agent?: string; metadata?: Record<string, unknown>; context?: Record<string, unknown> } = {},
+  ): Promise<void> {
     return this.exclusive(async () => {
       const parts = typeof content === "string" ? [textPart(content)] : content
       const optimistic: Message = {
@@ -181,8 +195,9 @@ export class Chat {
       }
       this.set({ messages: [...this.state.messages, optimistic], headId: optimistic.id, status: "submitted", error: null })
       const id = await this.ensureSession()
+      const clientContext = await this.clientContext(options.context)
       await this.run(() =>
-        this.options.transport.send(id, { content: parts, parentId: optimistic.parentId, agent: options.agent, metadata: options.metadata }, this.signal()),
+        this.options.transport.send(id, { content: parts, parentId: optimistic.parentId, agent: options.agent, metadata: options.metadata, clientContext }, this.signal()),
         optimistic.id,
       )
     })
@@ -200,7 +215,8 @@ export class Chat {
     return this.exclusive(async () => {
       const id = await this.ensureSession()
       this.set({ status: "submitted", error: null })
-      await this.run(() => this.options.transport.regenerate(id, { messageId }, this.signal()))
+      const clientContext = await this.clientContext()
+      await this.run(() => this.options.transport.regenerate(id, { messageId, clientContext }, this.signal()))
     })
   }
 
@@ -210,7 +226,8 @@ export class Chat {
       const id = await this.ensureSession()
       const parts = typeof content === "string" ? [textPart(content)] : content
       this.set({ status: "submitted", error: null })
-      await this.run(() => this.options.transport.send(id, { content: parts, editOf: messageId }, this.signal()))
+      const clientContext = await this.clientContext()
+      await this.run(() => this.options.transport.send(id, { content: parts, editOf: messageId, clientContext }, this.signal()))
     })
   }
 
@@ -288,12 +305,19 @@ export class Chat {
       const responses = this.takeResponses()
       if (!responses) return
       const id = this.state.sessionId!
-      await this.consume(() => this.options.transport.resume(id, { responses }, this.signal()))
+      const clientContext = await this.clientContext()
+      await this.consume(() => this.options.transport.resume(id, { responses, clientContext }, this.signal()))
     }
   }
 
   // -------------------------------------------------------------------------------------------
   // Streams
+
+  private async clientContext(extra?: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+    const base = await this.options.getContext?.()
+    if (!base && !extra) return undefined
+    return { ...base, ...extra }
+  }
 
   private exclusive(fn: () => Promise<void>): Promise<void> {
     const next = this.busy.then(fn, fn)

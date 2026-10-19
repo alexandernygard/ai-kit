@@ -163,11 +163,15 @@ export interface HarnessDriver {
   readonly kind: "harness"
   readonly provider: string
   readonly modelId?: string
+  /** The model's context window, for context-usage readings. */
+  readonly contextWindow?: number
   /** Features the harness handles itself, so ai-kit doesn't add its own versions. */
   readonly handles?: {
     compaction?: boolean
     subagents?: boolean
     skills?: boolean
+    /** Set false when step usage isn't one model call (it sums a whole turn), so it can't measure context. */
+    contextReadings?: boolean
   }
   run(request: HarnessRequest): AsyncIterable<HarnessEvent>
 }

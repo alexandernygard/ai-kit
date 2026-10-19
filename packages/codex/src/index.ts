@@ -45,7 +45,7 @@ export function codex(options: CodexDriverOptions = {}): HarnessDriver {
     kind: "harness",
     provider: "codex",
     modelId: options.model,
-    handles: { compaction: true },
+    handles: { compaction: true, contextReadings: false },
     run: (req) => runCodex(req, options),
   }
 }

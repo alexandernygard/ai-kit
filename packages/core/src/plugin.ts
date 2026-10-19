@@ -1,5 +1,6 @@
 import type { Agent, Instructions } from "./agent"
 import type { Command } from "./commands"
+import type { ContextProvider } from "./context-providers"
 import type { Hooks } from "./hooks"
 import type { Permissions } from "./permissions"
 import type { Skill } from "./skills"
@@ -32,6 +33,8 @@ export interface Plugin<Ctx = any> {
   permissions?: Permissions<Ctx>
   /** Added to every system prompt the plugin applies to. */
   instructions?: Instructions<Ctx>
+  /** Context providers for every agent the plugin applies to. */
+  contextProviders?: ContextProvider<Ctx>[]
   /** Prefix tool names with `<plugin>__` to avoid clashes. */
   namespaceTools?: boolean
   /** Run once when the kit starts. Use it for async setup like connecting to MCP servers. */
@@ -45,6 +48,7 @@ export interface PluginAPI<Ctx = any> {
   addCommands(commands: Command<Ctx>[]): void
   addHooks(hooks: Hooks<Ctx>): void
   addInstructions(instructions: Instructions<Ctx>): void
+  addContext(providers: ContextProvider<Ctx>[]): void
 }
 
 export function definePlugin<Ctx = any>(plugin: Omit<Plugin<Ctx>, "kind">): Plugin<Ctx> {
@@ -61,6 +65,7 @@ export interface ResolvedPlugin<Ctx = any> {
   hooks: Hooks<Ctx>[]
   permissions?: Permissions<Ctx>
   instructions: Instructions<Ctx>[]
+  contextProviders: ContextProvider<Ctx>[]
 }
 
 export async function resolvePlugin<Ctx>(plugin: Plugin<Ctx>): Promise<ResolvedPlugin<Ctx>> {
@@ -73,6 +78,7 @@ export async function resolvePlugin<Ctx>(plugin: Plugin<Ctx>): Promise<ResolvedP
     hooks: plugin.hooks ? [plugin.hooks] : [],
     permissions: plugin.permissions,
     instructions: plugin.instructions ? [plugin.instructions] : [],
+    contextProviders: [...(plugin.contextProviders ?? [])],
   }
   const extraTools: ToolInput[] = plugin.tools ? [plugin.tools] : []
   await plugin.setup?.({
@@ -82,6 +88,7 @@ export async function resolvePlugin<Ctx>(plugin: Plugin<Ctx>): Promise<ResolvedP
     addCommands: (c) => out.commands.push(...c),
     addHooks: (h) => out.hooks.push(h),
     addInstructions: (i) => out.instructions.push(i),
+    addContext: (c) => out.contextProviders.push(...c),
   })
   const { tools, toolkits } = collectTools(extraTools as ToolInput)
   const ns = (t: Tool): Tool => (plugin.namespaceTools ? { ...t, name: `${plugin.name}__${t.name}` } : t)

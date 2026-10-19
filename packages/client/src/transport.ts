@@ -148,7 +148,7 @@ export interface DirectTransportOptions<Ctx> {
  * the HTTP transport, so UI code doesn't change.
  */
 export function directTransport<Ctx>(kit: Kit<Ctx>, options: DirectTransportOptions<Ctx> = {}): Transport {
-  const opts = () => ({ ...options.runOptions, context: options.context as Ctx })
+  const opts = (body?: { clientContext?: Record<string, unknown> }) => ({ ...options.runOptions, context: options.context as Ctx, clientContext: body?.clientContext })
   const load = async (id: string) => {
     const s = await kit.getSession(id)
     if (!s || (options.ownerId !== undefined && s.record.ownerId !== options.ownerId)) throw new AiKitHttpError(404, "Session not found")
@@ -188,19 +188,19 @@ export function directTransport<Ctx>(kit: Kit<Ctx>, options: DirectTransportOpti
       return detail(id)
     },
     async send(id, body, signal) {
-      return fromRun((await load(id)).send(body.content, { ...opts(), parentId: body.parentId, editOf: body.editOf, agent: body.agent, metadata: body.metadata, interrupt: body.interrupt }), signal)
+      return fromRun((await load(id)).send(body.content, { ...opts(body), parentId: body.parentId, editOf: body.editOf, agent: body.agent, metadata: body.metadata, interrupt: body.interrupt }), signal)
     },
     async resume(id, body, signal) {
-      return fromRun((await load(id)).resume(body.responses, opts()), signal)
+      return fromRun((await load(id)).resume(body.responses, opts(body)), signal)
     },
     async respond(id, body, signal) {
       const s = await load(id)
       const live = s.activeRun()
       if (live && live.respond(body.toolCallId, body.response)) return { live: true, runId: live.id }
-      return fromRun(s.resume({ [body.toolCallId]: body.response }, opts()), signal)
+      return fromRun(s.resume({ [body.toolCallId]: body.response }, opts(body)), signal)
     },
     async regenerate(id, body, signal) {
-      return fromRun((await load(id)).regenerate(body.messageId, opts()), signal)
+      return fromRun((await load(id)).regenerate(body.messageId, opts(body)), signal)
     },
     async events(runId, o, signal) {
       await load(o.sessionId)

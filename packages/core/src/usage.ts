@@ -50,6 +50,28 @@ export const defaultPricing: Record<string, ModelPrice> = {
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 }
 
+/**
+ * Context windows by model id prefix, longest first. Claude models from Opus 4.6 on have 1M
+ * tokens; Haiku 4.5 has 200K. Add others with `createKit({ contextWindows })` or a driver's
+ * `capabilities.contextWindow`.
+ */
+export const defaultContextWindows: Record<string, number> = {
+  "claude-haiku-4-5": 200_000,
+  "claude-": 1_000_000,
+  opus: 1_000_000,
+  sonnet: 1_000_000,
+  haiku: 1_000_000,
+}
+
+export function contextWindowFor(modelId: string | undefined, table: Record<string, number> = defaultContextWindows): number | undefined {
+  if (!modelId) return undefined
+  const id = modelId.includes(":") ? modelId.slice(modelId.indexOf(":") + 1) : modelId
+  const key = Object.keys(table)
+    .filter((k) => id.startsWith(k))
+    .sort((a, b) => b.length - a.length)[0]
+  return key ? table[key] : undefined
+}
+
 export function priceFor(modelId: string | undefined, table: Record<string, ModelPrice>): ModelPrice | undefined {
   if (!modelId) return undefined
   const id = modelId.includes(":") ? modelId.slice(modelId.indexOf(":") + 1) : modelId

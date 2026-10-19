@@ -12,6 +12,8 @@ export interface ToolContext<Ctx = any> {
   signal: AbortSignal
   /** App context passed to `send(..., { context })`: the user, a db handle, etc. */
   context: Ctx
+  /** What the browser sent with the message (the page, a selection). Untrusted: validate it. */
+  clientContext?: Record<string, unknown>
   /** Session-scoped state that persists across runs. */
   state: StateAccess
   /** The conversation up to this call. */

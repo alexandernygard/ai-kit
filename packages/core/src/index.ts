@@ -57,9 +57,10 @@ export {
   type CompactionState,
   type TurnOptions,
 } from "./context"
+export { defineContext, currentTime, clientContext, renderContext, type ContextProvider, type ContextProviderArgs, type ResolvedContext } from "./context-providers"
 export { REMEMBERED_TOOLS_KEY, HARNESS_SESSIONS_KEY, HARNESS_FORK_KEY, type RunOptions, type ResolvedAgent } from "./runner"
 export * from "./driver"
-export type { AgentEvent, AgentEventType, EventOf, EventEnvelope, FinishReason } from "./events"
+export type { AgentEvent, AgentEventType, EventOf, EventEnvelope, FinishReason, ContextUsage } from "./events"
 export * from "./messages"
 export { reduceMessage, reduceMessages, type ReduceOptions } from "./reducer"
 export {
@@ -76,7 +77,7 @@ export {
   type JsonSchemaWrapper,
   type ValidationResult,
 } from "./schema"
-export { addUsage, emptyUsage, costOf, priceFor, defaultPricing, type Usage, type ModelPrice } from "./usage"
+export { addUsage, emptyUsage, costOf, priceFor, defaultPricing, contextWindowFor, defaultContextWindows, type Usage, type ModelPrice } from "./usage"
 export { EventHub, AsyncQueue, encodeSSE, decodeSSE, sseResponse } from "./stream"
 export type { Store, SessionRecord, ListSessionsQuery, SessionPage } from "./store/types"
 export { kvStore, memoryKV, memoryStore, pageSessions, type KV } from "./store/kv"
@@ -98,4 +99,5 @@ export {
   type ForkBody,
   type BranchBody,
   type ApiError,
+  type ClientContext,
 } from "./api"

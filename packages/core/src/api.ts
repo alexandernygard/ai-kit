@@ -32,8 +32,12 @@ export interface CreateSessionBody {
   metadata?: Record<string, unknown>
 }
 
+/** What the browser knows and the agent should too: the page, a selection. Untrusted on the server. */
+export type ClientContext = Record<string, unknown>
+
 export interface SendBody {
   content: string | Part[]
+  clientContext?: ClientContext
   parentId?: string | null
   editOf?: string
   agent?: string
@@ -44,11 +48,13 @@ export interface SendBody {
 
 export interface ResumeBody {
   responses: Record<string, ToolResponse>
+  clientContext?: ClientContext
 }
 
 export interface RespondBody {
   toolCallId: string
   response: ToolResponse
+  clientContext?: ClientContext
 }
 
 /** `respond` either reached a live run (JSON) or started a new one (event stream). */
@@ -59,6 +65,7 @@ export interface RespondLiveResponse {
 
 export interface RegenerateBody {
   messageId?: string
+  clientContext?: ClientContext
 }
 
 export interface ForkBody {

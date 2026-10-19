@@ -50,10 +50,28 @@ export type AgentEvent =
   | { type: "source"; part: SourcePart }
   | { type: "step-finish"; step: number; usage: Usage; finishReason: string }
   | { type: "status"; status: string; detail?: string }
+  | ({ type: "context-usage" } & ContextUsage)
   | { type: "compaction"; summary: string; uptoMessageId: string }
   | { type: "session-update"; patch: { title?: string; state?: Record<string, unknown>; metadata?: Record<string, unknown> } }
   | { type: "run-finish"; finishReason: FinishReason; usage: Usage; output?: unknown; message: Message }
   | { type: "error"; error: { message: string; code?: string } }
+
+/** How full the context window is. Sent before each model call (estimate) and after it (provider count). */
+export interface ContextUsage {
+  step: number
+  /** Tokens in the request: system, tools and messages (plus the reply, for provider counts). */
+  tokens: number
+  /** The model's context window. */
+  window: number
+  /** tokens / window, 0 to 1. */
+  ratio: number
+  /** `estimate` before the call (about 4 characters a token); `provider` once the model reported usage. */
+  source: "estimate" | "provider"
+  /** Estimated tokens by section; `context` lists each context provider. */
+  breakdown?: { system: number; tools: number; messages: number; context: Array<{ name: string; tokens: number }> }
+  /** Compaction kicks in at this ratio. */
+  compactAt?: number
+}
 
 export type AgentEventType = AgentEvent["type"]
 

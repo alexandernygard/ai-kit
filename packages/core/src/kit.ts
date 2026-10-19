@@ -1,5 +1,6 @@
 import type { Agent, Instructions } from "./agent"
 import type { Command } from "./commands"
+import type { ContextProvider } from "./context-providers"
 import type { ModelDriver } from "./driver"
 import type { EventEnvelope } from "./events"
 import { HookRunner, type Hooks } from "./hooks"
@@ -14,7 +15,7 @@ import type { Skill } from "./skills"
 import { memoryStore } from "./store/kv"
 import type { ListSessionsQuery, SessionRecord, Store } from "./store/types"
 import { collectTools, type Tool, type ToolInput, type Toolkit } from "./tools"
-import { defaultPricing, type ModelPrice } from "./usage"
+import { defaultContextWindows, defaultPricing, type ModelPrice } from "./usage"
 
 export interface KitOptions<Ctx = any> {
   agents: Agent<Ctx>[]
@@ -30,6 +31,10 @@ export interface KitOptions<Ctx = any> {
   permissions?: Permissions<Ctx>
   /** Added to every agent's system prompt. */
   instructions?: Instructions<Ctx>
+  /** Context providers for every agent. */
+  contextProviders?: ContextProvider<Ctx>[]
+  /** Context windows by model id prefix, merged over the built-in table. */
+  contextWindows?: Record<string, number>
   /** Agent for sessions created without one. Default: the first. */
   defaultAgent?: string
   /** USD per million tokens by model id prefix, merged over the built-in table. */
@@ -94,6 +99,7 @@ export class Kit<Ctx = any> {
     this.host = {
       store: this.store,
       pricing: this.pricing,
+      contextWindows: { ...defaultContextWindows, ...options.contextWindows },
       persistEvents: options.persistEvents ?? !!this.store.appendEvents,
       resolve: (name) => this.resolve(name),
       registerRun: (r) => this.runs.set(r.id, r),
@@ -155,6 +161,10 @@ export class Kit<Ctx = any> {
           hooks: new HookRunner(hooks),
           permissions: mergePermissions(this.options.permissions, ...plugins.map((pl) => pl.permissions), agent.permissions),
           instructions: [...(this.options.instructions ? [this.options.instructions] : []), ...plugins.flatMap((pl) => pl.instructions)],
+          contextProviders: dedupeBy(
+            [...(this.options.contextProviders ?? []), ...plugins.flatMap((pl) => pl.contextProviders), ...(agent.contextProviders ?? [])],
+            (c) => c.name,
+          ),
           commands: dedupeBy([...(this.options.commands ?? []), ...plugins.flatMap((pl) => pl.commands), ...(agent.commands ?? [])], (c) => c.name),
           subagents: agent.subagents ?? [],
         }

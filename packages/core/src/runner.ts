@@ -1,7 +1,7 @@
 import type { Agent, Limits } from "./agent"
 import { askUserTool, STRUCTURED_OUTPUT_TOOL, structuredOutputTool, todoTool } from "./builtin-tools"
 import { type CodeModeOptions, runCodeTool } from "./code-mode"
-import { COMPACTION_KEY, type CompactionState, estimateRequestTokens, NUDGE_PART, summarize, toModelTurns } from "./context"
+import { COMPACTION_KEY, type CompactionState, estimateRequestTokens, estimateTokens, NUDGE_PART, summarize, toModelTurns } from "./context"
 import { ACTIVE_TOOLS_KEY, type DisclosureOptions, searchToolsTool, toolkitsPrompt, type ToolIndexEntry } from "./disclosure"
 import {
   type BridgedTool,
@@ -26,10 +26,12 @@ import { type JSONSchema, type Schema, toJsonSchema, validate } from "./schema"
 import { LOADED_SKILLS_KEY, type Skill, skillsPrompt, skillTools } from "./skills"
 import type { SessionRecord, Store } from "./store/types"
 import { errorOutput, type StateAccess, type Tool, type ToolContext, type Toolkit, toModelOutput, toToolSpec, tool } from "./tools"
-import { addUsage, costOf, emptyUsage, type ModelPrice, priceFor, type Usage } from "./usage"
+import { addUsage, contextWindowFor, costOf, emptyUsage, type ModelPrice, priceFor, type Usage } from "./usage"
 import { jsonSchema } from "./schema"
 import type { Instructions } from "./agent"
 import type { Command } from "./commands"
+import { type ContextProvider, renderContext, type ResolvedContext } from "./context-providers"
+import type { ContextUsage } from "./events"
 
 export const REMEMBERED_TOOLS_KEY = "ai-kit.allowedTools"
 export const HARNESS_SESSIONS_KEY = "ai-kit.harnessSessions"
@@ -45,12 +47,19 @@ export interface ResolvedAgent<Ctx = any> {
   hooks: HookRunner<Ctx>
   permissions: Permissions<Ctx>
   instructions: Instructions<Ctx>[]
+  contextProviders: ContextProvider<Ctx>[]
   commands: Command<Ctx>[]
   subagents: Agent<Ctx>[]
 }
 
 export interface RunOptions<Ctx = any> {
   context?: Ctx
+  /**
+   * What the browser sent with the message: the current page, a selection, the open document.
+   * Untrusted. Context providers, tools and hooks can read it; add `clientContext()` to show it
+   * to the model.
+   */
+  clientContext?: Record<string, unknown>
   /** Structured output for this run. */
   output?: Schema | JSONSchema
   settings?: ModelSettings
@@ -76,6 +85,7 @@ export interface RunOptions<Ctx = any> {
 export interface RunnerHost {
   store: Store
   pricing: Record<string, ModelPrice>
+  contextWindows: Record<string, number>
   resolve(agentName: string): Promise<ResolvedAgent>
   registerRun(run: Run): void
   unregisterRun(run: Run): void
@@ -139,6 +149,8 @@ class RunContext {
   private timedOut = false
   /** Structured output through the provider's JSON mode (true) or the structured_output tool. */
   private nativeOutputNow = false
+  /** Run-scoped context provider results, by name. */
+  private runContext = new Map<string, string | undefined>()
   private finishReason: FinishReason = "stop"
   private error?: { message: string; code?: string }
 
@@ -164,6 +176,7 @@ class RunContext {
       runId: run.id,
       agent: this.agent.name,
       context: input.options.context,
+      clientContext: input.options.clientContext,
       scratch: new Map(),
     }
     this.message = input.continueMessage
@@ -407,8 +420,14 @@ class RunContext {
     return driver.kind === "harness" || driver.capabilities?.structuredOutput === true
   }
 
-  private async systemPrompt(hasDeferred: boolean, loadedSkills: Set<string>): Promise<SystemBlock[]> {
-    const ictx = { agent: this.agent.name, sessionId: this.input.session.id, context: this.input.options.context, state: this.state }
+  private async systemPrompt(hasDeferred: boolean, loadedSkills: Set<string>, contexts: ResolvedContext[] = []): Promise<SystemBlock[]> {
+    const ictx = {
+      agent: this.agent.name,
+      sessionId: this.input.session.id,
+      context: this.input.options.context,
+      clientContext: this.input.options.clientContext,
+      state: this.state,
+    }
     const resolve = async (i: Instructions) => (typeof i === "function" ? await i(ictx) : i)
     const stable: string[] = []
     for (const i of [this.agent.instructions, ...this.resolved.instructions]) {
@@ -432,6 +451,7 @@ class RunContext {
       dynamic.push(`When you're done, call \`${STRUCTURED_OUTPUT_TOOL}\` with your final answer.`)
     }
     void loadedSkills
+    for (const c of contexts) if (c.placement === "system") dynamic.push(c.text)
     const blocks: SystemBlock[] = []
     const s = stable.filter(Boolean).join("\n\n")
     if (s) blocks.push({ text: s, cache: true })
@@ -462,8 +482,9 @@ class RunContext {
       if (this.overBudget()) return this.end("budget")
 
       const { modelTools, hasDeferred, loadedSkills } = this.assembleTools(driver)
-      const system = await this.systemPrompt(hasDeferred, loadedSkills)
-      let turns = this.turns()
+      const contexts = await this.resolveContext(this.step)
+      const system = await this.systemPrompt(hasDeferred, loadedSkills, contexts)
+      let turns = this.turns(contexts)
       let request: ModelRequest = {
         system,
         messages: turns,
@@ -474,18 +495,20 @@ class RunContext {
         signal: this.signal,
       }
       if (await this.maybeCompact(driver, request)) {
-        turns = this.turns()
+        turns = this.turns(contexts)
         request = { ...request, messages: turns }
       }
       request = await this.resolved.hooks.beforeModelCall(request, { ...this.hookCtx, step: this.step })
 
       const stepIndex = this.step++
       this.emit({ type: "step-start", step: stepIndex })
+      this.emitEstimate(stepIndex, request, contexts)
       const { calls, finishReason, usage } = await this.streamStep(driver, request, stepIndex)
       const stepUsage = this.priced(usage, driver)
       this.usage = addUsage(this.usage, stepUsage)
       this.message = { ...this.message, usage: this.usage }
       this.emit({ type: "step-finish", step: stepIndex, usage: stepUsage, finishReason })
+      this.emitMeasured(stepIndex, usage)
       await this.resolved.hooks.notify("afterModelCall", { step: stepIndex, finishReason, usage: stepUsage, toolCalls: calls }, this.hookCtx)
 
       if (finishReason === "content-filter") return this.end("content-filter")
@@ -524,13 +547,101 @@ class RunContext {
     }
   }
 
-  private turns() {
+  private turns(contexts: ResolvedContext[] = []) {
     const path = [...this.input.history, ...(this.input.userMessage ? [this.input.userMessage] : []), this.message]
-    return toModelTurns(path, {
+    const turns = toModelTurns(path, {
       compaction: this.state[COMPACTION_KEY] as CompactionState | undefined,
       clearToolResults: this.agent.compaction === false ? false : this.agent.compaction?.clearToolResults,
       toModelOutput: (name, output) => toModelOutput(this.tools.get(name), output),
     })
+    // Turn context goes in front of the newest user message, so earlier turns (and the cache) stay put.
+    const inTurn = contexts.filter((c) => c.placement === "turn")
+    if (inTurn.length) {
+      const i = turns.findLastIndex((t) => t.role === "user")
+      const target = turns[i]
+      if (target?.role === "user") {
+        turns[i] = { role: "user", content: [...inTurn.map((c) => ({ type: "text" as const, text: c.text })), ...target.content] }
+      }
+    }
+    return turns
+  }
+
+  // ----------------------------------------------------------------------------------------
+  // Context providers and context usage
+
+  /** Run every provider due at this step. Run-scoped results are computed once and reused. */
+  private async resolveContext(step: number): Promise<ResolvedContext[]> {
+    const providers = this.resolved.contextProviders
+    if (!providers.length) return []
+    const messages = [...this.input.history, ...(this.input.userMessage ? [this.input.userMessage] : []), this.message]
+    const out: ResolvedContext[] = []
+    await Promise.all(
+      providers.map(async (p) => {
+        let text: string | undefined
+        if (p.refresh !== "step" && this.runContext.has(p.name)) text = this.runContext.get(p.name)
+        else {
+          try {
+            const value = await p.get({
+              agent: this.agent.name,
+              sessionId: this.input.session.id,
+              context: this.input.options.context,
+              clientContext: this.input.options.clientContext,
+              state: this.state,
+              messages,
+              step,
+            })
+            text = renderContext(p.name, value)
+          } catch (e) {
+            this.emit({ type: "status", status: "context-error", detail: `${p.name}: ${e instanceof Error ? e.message : String(e)}` })
+          }
+          if (p.refresh !== "step") this.runContext.set(p.name, text)
+        }
+        if (text) out.push({ name: p.name, placement: p.placement ?? "turn", text })
+      }),
+    )
+    // Keep the configured order regardless of which provider finished first.
+    const order = new Map(providers.map((p, i) => [p.name, i]))
+    return out.sort((a, b) => order.get(a.name)! - order.get(b.name)!)
+  }
+
+  /** The model's context window: configured, then reported by the driver, then the built-in table. */
+  private contextWindow(): number {
+    const d = this.driver
+    const fromCompaction = this.agent.compaction ? this.agent.compaction.contextWindow : undefined
+    return (
+      fromCompaction ??
+      (d.kind === "model" ? d.capabilities?.contextWindow : d.contextWindow) ??
+      contextWindowFor(d.modelId, this.host.contextWindows) ??
+      200_000
+    )
+  }
+
+  private compactAt(): number | undefined {
+    if (this.agent.compaction === false || this.driver.kind === "harness") return undefined
+    return this.agent.compaction?.threshold ?? 0.8
+  }
+
+  private emitEstimate(step: number, request: ModelRequest, contexts: ResolvedContext[]) {
+    const system = estimateTokens(request.system.map((b) => b.text).join("\n"))
+    const tools = estimateTokens(request.tools)
+    const messages = estimateTokens(request.messages)
+    this.emitUsage({
+      step,
+      tokens: system + tools + messages,
+      source: "estimate",
+      breakdown: { system, tools, messages, context: contexts.map((c) => ({ name: c.name, tokens: estimateTokens(c.text) })) },
+    })
+  }
+
+  /** What the provider counted: the whole prompt (cached or not) plus the reply. */
+  private emitMeasured(step: number, usage: Usage) {
+    const tokens = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0) + usage.outputTokens
+    if (tokens > 0) this.emitUsage({ step, tokens, source: "provider" })
+  }
+
+  private emitUsage(u: Omit<ContextUsage, "window" | "ratio" | "compactAt">) {
+    const window = this.contextWindow()
+    this.emit({ type: "context-usage", ...u, window, ratio: Math.min(1, u.tokens / window), compactAt: this.compactAt() })
   }
 
   private stepText(step: number) {
@@ -676,7 +787,7 @@ class RunContext {
   private async maybeCompact(driver: ModelDriver, request: ModelRequest): Promise<boolean> {
     const opts = this.agent.compaction
     if (opts === false) return false
-    const windowSize = opts?.contextWindow ?? driver.capabilities?.contextWindow ?? 200_000
+    const windowSize = this.contextWindow()
     const threshold = opts?.threshold ?? 0.8
     const tokens = estimateRequestTokens(request)
     if (tokens < windowSize * threshold) return false
@@ -707,6 +818,7 @@ class RunContext {
       agent: this.agent.name,
       signal: this.signal,
       context: this.input.options.context,
+      clientContext: this.input.options.clientContext,
       state: this.stateAccess(),
       messages: () => [...this.input.history, ...(this.input.userMessage ? [this.input.userMessage] : []), this.message],
       progress: (data) => this.emit({ type: "tool-progress", toolCallId, data }),
@@ -992,6 +1104,7 @@ class RunContext {
           prompt,
           options: {
             context: this.input.options.context,
+            clientContext: this.input.options.clientContext,
             approvalMode: "wait",
             onToolApproval: this.input.options.onToolApproval,
             permissionMode: this.input.options.permissionMode,
@@ -1020,7 +1133,9 @@ class RunContext {
 
   private async runHarness(driver: HarnessDriver) {
     const { modelTools, hasDeferred, loadedSkills } = this.assembleTools(driver)
-    const system = (await this.systemPrompt(hasDeferred, loadedSkills)).map((b) => b.text).join("\n\n")
+    // A harness takes one system prompt per run, so all context goes there.
+    const contexts = (await this.resolveContext(0)).map((c) => ({ ...c, placement: "system" as const }))
+    const system = (await this.systemPrompt(hasDeferred, loadedSkills, contexts)).map((b) => b.text).join("\n\n")
     const sessions = (this.state[HARNESS_SESSIONS_KEY] as Record<string, string> | undefined) ?? {}
     const resumeId = sessions[driver.provider]
     const bridged: BridgedTool[] = modelTools
@@ -1057,6 +1172,7 @@ class RunContext {
           break
         case "step-finish":
           this.emit({ ...e, step: Math.max(0, this.step - 1) })
+          if (driver.handles?.contextReadings !== false) this.emitMeasured(Math.max(0, this.step - 1), e.usage)
           break
         case "text-delta":
           this.emit({ ...e, partId: this.partId(`h:t:${e.partId}`, "txt") })

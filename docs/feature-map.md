@@ -15,6 +15,8 @@ How ai-kit lines up with what Claude, Claude Code and the Claude API offer, and 
 | Stop | `abort` and `stop` | ✅ 🟣 |
 | Pick up where you left off | reconnect by `seq`, event log | ✅ 🟣 |
 | Memory | `memoryTool` (Anthropic's memory commands) | ✅ 🟣 |
+| Context window indicator | `context-usage` events, `chat.contextUsage` | ✅ 🟣 (Codex: estimates only) |
+| Page and selection context | `getContext` + `clientContext()` provider | ✅ 🟣 |
 | Ask the user questions | `ask_user` + Questionnaire | ✅ 🟣 |
 | Artifacts | a `data` part from `ctx.emit({ name: "artifact" })` and your renderer | ✅ 🟣 |
 | Citations and web search | provider tools through `aiSdk`; Codex `webSearch`; Claude Code WebSearch with `builtinTools` | ✅ 🟣 |

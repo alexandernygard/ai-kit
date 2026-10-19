@@ -1,4 +1,66 @@
-# Context: tool search, code mode, skills, compaction
+# Context: providers, usage, tool search, code mode, skills, compaction
+
+## Context providers
+
+Context providers attach live information to every model call, such as who the user is, what's on their screen, the time or the open document, so you don't have to rebuild instructions by hand.
+
+```ts
+import { clientContext, currentTime, defineContext } from "@alexandernygard/ai-kit"
+
+defineAgent({
+  ...,
+  contextProviders: [
+    defineContext({ name: "user", get: async ({ context }) => ({ name: context.user.name, plan: await plans.of(context.user.id) }) }),
+    defineContext({ name: "rules", placement: "system", get: () => "Prices include VAT." }),
+    currentTime({ timeZone: "Europe/Oslo" }),
+    clientContext({ pick: ["route", "selection"] }),
+  ],
+})
+```
+
+The model sees each one as `<context name="user">...</context>`. A provider returns text, an object (sent as JSON) or nothing (skipped). It gets the trusted `context`, the untrusted `clientContext`, session `state`, the `messages` the model is about to see, and the `step`.
+
+| Option | Values | Default |
+| --- | --- | --- |
+| `placement` | `turn`: in front of the newest user message. `system`: a system block. | `turn`, so the system prompt stays the same and prompt caching keeps working |
+| `refresh` | `run`: computed once per run. `step`: before every model call. | `run` (`currentTime` uses `step`) |
+
+- Providers come from the kit, plugins (`contextProviders`, or `api.addContext()` in `setup`) and the agent. They run in that order, and the same name overrides an earlier one.
+- A provider that throws is skipped, and a `status` event reports `context-error`.
+- With harness drivers everything goes into the system prompt, computed once per run, because a harness takes one system prompt per turn.
+
+### Context from the browser
+
+The browser can send what it knows with each message: the current route, a selection, the document that's open.
+
+```ts
+const chat = useChat({ getContext: () => ({ route: location.pathname, selection: editor.selectedText() }) })
+chat.send("Explain this", { context: { selection: "..." } })   // per message, merged over getContext()
+```
+
+On the server it arrives as `clientContext`. It's untrusted, so it never mixes with your `context`. The model only sees it if the agent has the `clientContext()` provider, which labels it as user input and can `pick` keys. Tools and hooks can read `ctx.clientContext` too. The server limits it to 16 KB; set `createHandler(kit, { clientContext: { maxBytes, transform } })` to reshape or drop it per user, or `false` to ignore it.
+
+## Context usage
+
+Every model call reports how full the context window is. A `context-usage` event goes out before the call (an estimate) and after it (the provider's count):
+
+```ts
+{
+  type: "context-usage",
+  step: 0,
+  tokens: 2919,
+  window: 1_000_000,
+  ratio: 0.003,
+  source: "estimate" | "provider",
+  compactAt: 0.8,                 // when compaction starts; absent for harness drivers
+  breakdown: { system: 812, tools: 640, messages: 1467, context: [{ name: "user", tokens: 38 }] },
+}
+```
+
+- Estimates count about four characters per token. Provider counts are input (cached or not) plus output.
+- The latest reading is also stored on the assistant message (`message.contextUsage`). `Chat` exposes it as `state.contextUsage`, and `contextUsageOf(messages)` finds it.
+- The window comes from `compaction.contextWindow`, then the driver (`capabilities.contextWindow`, or `claudeAgent({ contextWindow })`), then a table by model id (Claude models built in; add others with `createKit({ contextWindows: { "acme-": 128_000 } })`), and finally 200 000.
+- Codex reports usage per turn rather than per call, so its runs only get estimates.
 
 Every tool definition, instruction and old tool output costs tokens on every call. These four features keep the context small without taking capabilities away.
 

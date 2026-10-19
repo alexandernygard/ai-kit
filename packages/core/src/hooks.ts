@@ -9,6 +9,8 @@ export interface HookContext<Ctx = any> {
   runId: string
   agent: string
   context: Ctx
+  /** What the browser sent with the message. Untrusted. */
+  clientContext?: Record<string, unknown>
   /** Run-scoped scratch space shared by hooks. */
   scratch: Map<string, unknown>
 }

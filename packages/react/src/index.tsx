@@ -96,6 +96,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         onFinish: (m) => latest.current.onFinish?.(m),
         onError: (e) => latest.current.onError?.(e),
         onSessionCreated: (s) => latest.current.onSessionCreated?.(s),
+        getContext: () => latest.current.getContext?.(),
       }),
   )
   useEffect(() => chat.setClientTools(options.clientTools), [chat, options.clientTools])

@@ -38,6 +38,11 @@ export interface HandlerOptions<Ctx = any> {
   agents?: string[]
   /** Server-side run settings: permission mode, limits, approval handling. */
   runOptions?: (ctx: { req: Request; session: Session<Ctx>; auth: AuthResult<Ctx> }) => Partial<RunOptions<Ctx>> | Promise<Partial<RunOptions<Ctx>>>
+  /**
+   * `clientContext` from the browser (the page, a selection). On by default, capped at 16 KB.
+   * `transform` can drop or reshape it per user; `false` ignores it.
+   */
+  clientContext?: false | { maxBytes?: number; transform?: (value: Record<string, unknown>, auth: AuthResult<Ctx>) => Record<string, unknown> | undefined }
   /** Allow cross-origin requests from these origins (`*` for any). */
   cors?: string | string[]
 }
@@ -123,9 +128,19 @@ function buildRoutes<Ctx>(kit: Kit<Ctx>, options: HandlerOptions<Ctx>) {
     return s
   }
 
-  const runOpts = async (ctx: RouteCtx<Ctx>, session: Session<Ctx>): Promise<RunOptions<Ctx>> => ({
+  const readClientContext = (value: unknown, auth: AuthResult<Ctx>): Record<string, unknown> | undefined => {
+    if (options.clientContext === false || value === undefined || value === null) return undefined
+    if (typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "clientContext must be an object")
+    const max = options.clientContext?.maxBytes ?? 16_384
+    if (JSON.stringify(value).length > max) throw new HttpError(413, `clientContext is larger than ${max} bytes`)
+    const v = value as Record<string, unknown>
+    return options.clientContext?.transform ? options.clientContext.transform(v, auth) : v
+  }
+
+  const runOpts = async (ctx: RouteCtx<Ctx>, session: Session<Ctx>, body?: { clientContext?: unknown }): Promise<RunOptions<Ctx>> => ({
     ...(await options.runOptions?.({ req: ctx.req, session, auth: ctx.auth })),
     context: ctx.auth.context as Ctx,
+    clientContext: readClientContext(body?.clientContext, ctx.auth),
   })
 
   const stream = (run: Run, ctx: RouteCtx<Ctx>) => {
@@ -195,7 +210,7 @@ function buildRoutes<Ctx>(kit: Kit<Ctx>, options: HandlerOptions<Ctx>) {
       if (body.content === undefined) throw new HttpError(400, "content is required")
       if (body.agent && !(await allowed(body.agent))) throw new HttpError(400, `Unknown agent ${body.agent}`)
       const run = s.send(body.content, {
-        ...(await runOpts(ctx, s)),
+        ...(await runOpts(ctx, s, body)),
         parentId: body.parentId,
         editOf: body.editOf,
         agent: body.agent,
@@ -208,7 +223,7 @@ function buildRoutes<Ctx>(kit: Kit<Ctx>, options: HandlerOptions<Ctx>) {
     route("POST", "/sessions/:id/resume", async (ctx) => {
       const s = await load(ctx.params.id!, ctx.auth)
       const body = await read<ResumeBody>(ctx.req)
-      return stream(s.resume(body.responses ?? {}, await runOpts(ctx, s)), ctx)
+      return stream(s.resume(body.responses ?? {}, await runOpts(ctx, s, body)), ctx)
     }),
 
     route("POST", "/sessions/:id/respond", async (ctx) => {
@@ -216,13 +231,13 @@ function buildRoutes<Ctx>(kit: Kit<Ctx>, options: HandlerOptions<Ctx>) {
       const body = await read<RespondBody>(ctx.req)
       const live = s.activeRun()
       if (live && live.respond(body.toolCallId, body.response)) return json({ live: true, runId: live.id })
-      return stream(s.resume({ [body.toolCallId]: body.response }, await runOpts(ctx, s)), ctx)
+      return stream(s.resume({ [body.toolCallId]: body.response }, await runOpts(ctx, s, body)), ctx)
     }),
 
     route("POST", "/sessions/:id/regenerate", async (ctx) => {
       const s = await load(ctx.params.id!, ctx.auth)
       const body = await read<RegenerateBody>(ctx.req)
-      return stream(s.regenerate(body.messageId, await runOpts(ctx, s)), ctx)
+      return stream(s.regenerate(body.messageId, await runOpts(ctx, s, body)), ctx)
     }),
 
     route("POST", "/sessions/:id/fork", async ({ req, params, auth }) => {

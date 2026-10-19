@@ -19,7 +19,9 @@ chat.subscribe((state) => render(state))   // { sessionId, session, messages, he
 await chat.send("Hello")
 ```
 
-`status` is `idle`, `loading`, `submitted`, `streaming`, `awaiting-input` or `error`. `pending` holds the tool calls waiting on the user.
+`status` is `idle`, `loading`, `submitted`, `streaming`, `awaiting-input` or `error`. `pending` holds the tool calls waiting on the user. `contextUsage` is the latest context-window reading, for a "62% of context" meter.
+
+Pass `getContext: () => ({ route, selection })` to send what the app knows with every message (see [context providers](context.md#context-from-the-browser)), and `send(text, { context })` to add to it for one message.
 
 ## React
 
@@ -86,6 +88,7 @@ Helpers: `toolLabel(t)` ("Booking DY612 (needs approval)"), `isToolActive(t)`, `
 | Approval | `Card` with `CodeBlock` input, Approve / Always allow / Deny | `t.state === "awaiting-approval"`, `approve`, `deny` |
 | Ask the user | `Questionnaire` with choices and a free-text `QuestionnaireInput` | `ask_user` input, `submitToolOutput(id, { answers })` |
 | Task list | a checklist above the composer | `todosOf(chat.path)` |
+| Context meter | `Progress` and a token count, breakdown in a tooltip | `chat.contextUsage` |
 | Composer with stop | `InputGroup`, `InputGroupTextarea`, `InputGroupButton` | `send`, `stop`, `isRunning` |
 | Versions | ghost icon buttons and "2 / 3" | `versions(id)`, `switchBranch` |
 | Regenerate, fork | icon buttons in `MessageFooter` | `regenerate(id)`, `fork(id)` |

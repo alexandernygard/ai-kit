@@ -9,4 +9,4 @@ export {
   type HttpTransportOptions,
   type DirectTransportOptions,
 } from "./transport"
-export { segments, sourcesOf, todosOf, toolLabel, isToolActive, toolDuration, type Segment, type ToolNode } from "./parts"
+export { segments, sourcesOf, todosOf, contextUsageOf, toolLabel, isToolActive, toolDuration, type Segment, type ToolNode } from "./parts"

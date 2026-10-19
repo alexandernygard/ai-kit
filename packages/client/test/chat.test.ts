@@ -1,4 +1,4 @@
-import { createKit, defineAgent, jsonSchema, type Kit, textOf, tool } from "@alexandernygard/ai-kit"
+import { clientContext, createKit, defineAgent, jsonSchema, type Kit, textOf, tool } from "@alexandernygard/ai-kit"
 import { createHandler } from "@alexandernygard/ai-kit-server"
 import { mockHarness, mockModel, type MockResponse } from "@alexandernygard/ai-kit/testing"
 import { describe, expect, it } from "vitest"
@@ -120,6 +120,28 @@ describe("Chat over HTTP", () => {
     for await (const env of replay.events) seqs.push(env.seq)
     expect(seqs[0]).toBe(3)
     expect(seqs.length).toBeGreaterThan(3)
+  })
+
+  it("sends client context with every message and exposes context usage", async () => {
+    const model = mockModel([{ text: "You're on the orders page." }, { text: "again" }], { capabilities: { contextWindow: 10_000 } })
+    const kit = createKit({ agents: [defineAgent({ name: "a", model, contextProviders: [clientContext()] })] })
+    const handler = createHandler(kit, { clientContext: { maxBytes: 200 } })
+    const transport = httpTransport({ baseUrl: "http://app.test/api/ai", fetch: (input, init) => handler(new Request(input as string, init)) })
+    let route = "/orders"
+    const chat = new Chat({ transport, getContext: () => ({ route }) })
+    await chat.send("Where am I?", { context: { selection: "A1" } })
+    expect(JSON.stringify(model.requests[0]!.messages)).toContain('\\"route\\": \\"/orders\\"')
+    expect(JSON.stringify(model.requests[0]!.messages)).toContain("A1")
+    const usage = chat.getSnapshot().contextUsage!
+    expect(usage.window).toBe(10_000)
+    expect(usage.source).toBe("provider")
+
+    route = "/settings"
+    await chat.regenerate()
+    expect(JSON.stringify(model.requests[1]!.messages)).toContain("/settings")
+
+    await chat.send("x".repeat(10), { context: { big: "z".repeat(500) } })
+    expect(chat.getSnapshot().error).toMatch(/larger than 200 bytes/)
   })
 
   it("answers live runs (harness drivers wait in memory)", async () => {

@@ -1,4 +1,4 @@
-import type { AskUserQuestion, Message } from "@alexandernygard/ai-kit"
+import type { AskUserQuestion, ContextUsage, Message } from "@alexandernygard/ai-kit"
 import {
   isToolActive,
   MessageParts,
@@ -29,6 +29,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
   Marker,
+  Progress,
   MarkerContent,
   MarkerIcon,
   Message as MessageRow,
@@ -94,6 +95,7 @@ export function App() {
       void sessions.refresh()
     },
     onFinish: () => void sessions.refresh(),
+    getContext: () => ({ locale: navigator.language, screen: window.innerWidth < 768 ? "phone" : "desktop" }),
     clientTools: {
       get_location: () =>
         new Promise((resolve) =>
@@ -370,6 +372,23 @@ function AskUser({ call, chat }: { call: ToolNode; chat: UseChatResult }) {
   )
 }
 
+/** How full the model's context window is, with a breakdown on hover. */
+function ContextMeter({ usage }: { usage: ContextUsage }) {
+  const pct = Math.round(usage.ratio * 100)
+  const b = usage.breakdown
+  const detail = b
+    ? `System ${b.system}, tools ${b.tools}, messages ${b.messages} tokens${b.context.length ? `; context: ${b.context.map((c) => `${c.name} ${c.tokens}`).join(", ")}` : ""}`
+    : undefined
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground" title={detail}>
+      <Progress value={pct} className="h-1 w-24" />
+      <span className="tabular-nums">
+        {pct < 1 ? "<1" : pct}% of context ({usage.tokens.toLocaleString()} / {usage.window.toLocaleString()} tokens)
+      </span>
+    </div>
+  )
+}
+
 function Composer({ chat }: { chat: UseChatResult }) {
   const [draft, setDraft] = useState("")
   const todos = todosOf(chat.path)
@@ -390,6 +409,7 @@ function Composer({ chat }: { chat: UseChatResult }) {
           ))}
         </ul>
       )}
+      {chat.contextUsage && <ContextMeter usage={chat.contextUsage} />}
       <form
         onSubmit={(e) => {
           e.preventDefault()

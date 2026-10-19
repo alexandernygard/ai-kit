@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createKit, defineAgent, jsonSchema, tool } from "@alexandernygard/ai-kit"
+import { clientContext, createKit, defineAgent, jsonSchema, tool } from "@alexandernygard/ai-kit"
 import { mockModel } from "@alexandernygard/ai-kit/testing"
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
@@ -41,6 +41,17 @@ describe("react", () => {
     )
     expect(screen.getByTestId("weather").textContent).toBe("4°C in Oslo")
     expect(screen.getByTestId("text").textContent).toBe("It's **4°C**.")
+  })
+
+  it("useChat reads the latest getContext", async () => {
+    const model = mockModel([{ text: "a" }, { text: "b" }])
+    const kit = createKit({ agents: [defineAgent({ name: "a", model, contextProviders: [clientContext()] })] })
+    const wrapper = ({ children }: { children: React.ReactNode }) => <AIKitProvider transport={directTransport(kit)}>{children}</AIKitProvider>
+    const { result, rerender } = renderHook(({ page }) => useChat({ getContext: () => ({ page }) }), { wrapper, initialProps: { page: "/one" } })
+    await act(() => result.current.send("hi"))
+    rerender({ page: "/two" })
+    await act(() => result.current.send("again"))
+    expect(JSON.stringify(model.requests[1]!.messages)).toContain("/two")
   })
 
   it("useSessions lists, renames and removes", async () => {

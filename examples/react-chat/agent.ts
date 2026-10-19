@@ -1,5 +1,5 @@
 import { anthropic } from "@ai-sdk/anthropic"
-import { defineAgent, defineCommand, definePlugin, jsonSchema, tool, toolkit } from "@alexandernygard/ai-kit"
+import { clientContext, currentTime, defineAgent, defineCommand, defineContext, definePlugin, jsonSchema, tool, toolkit } from "@alexandernygard/ai-kit"
 import { aiSdk } from "@alexandernygard/ai-kit-ai-sdk"
 import { claudeAgent } from "@alexandernygard/ai-kit-claude-agent"
 import { loadSkills } from "@alexandernygard/ai-kit-node"
@@ -96,5 +96,12 @@ export async function createAgent() {
     skills: await loadSkills(new URL("./skills", import.meta.url).pathname),
     subagents: [researcher],
     builtins: { askUser: true, todos: true },
+    contextProviders: [
+      // Trusted, from the server's auth (server.ts).
+      defineContext({ name: "traveller", get: ({ context }) => ({ name: context?.name, homeAirport: "OSL", currency: "NOK" }) }),
+      currentTime({ timeZone: "Europe/Oslo" }),
+      // Untrusted, from the browser (App.tsx getContext).
+      clientContext({ pick: ["locale", "screen"] }),
+    ],
   })
 }
