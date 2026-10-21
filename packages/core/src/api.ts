@@ -8,7 +8,7 @@ import type { SessionRecord } from "./store/types"
  * with server-sent events of EventEnvelope; everything else is JSON.
  */
 
-/** A session as the API returns it. Internal harness state is left out. */
+/** A session as the API returns it. Internal state is left out. */
 export type SessionInfo = Omit<SessionRecord, "state"> & { state: Record<string, unknown> }
 
 export interface SessionDetail {
@@ -82,6 +82,7 @@ export interface ApiError {
   code?: string
 }
 
+// Left by harness drivers in sessions created before they were removed.
 const HIDDEN_STATE = ["ai-kit.harnessSessions", "ai-kit.harnessFork"]
 
 export function toSessionInfo(rec: SessionRecord): SessionInfo {

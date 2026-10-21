@@ -1,57 +1,57 @@
 # Feature map
 
-How ai-kit lines up with what Claude, Claude Code and the Claude API offer, and what's left to build. Model support: ✅ works with model drivers (API keys); 🟣 works with harness drivers (subscriptions).
+How ai-kit lines up with what Claude, Claude Code and the Claude API offer, and what's left to build.
 
 ## Conversations
 
-| Claude feature | ai-kit | |
-| --- | --- | --- |
-| Streaming text and thinking | reasoning parts, `effort`, `reasoningSummary` | ✅ 🟣 |
-| Edit a message, retry, version arrows | `edit`, `regenerate`, `versions`, `switchBranch` | ✅ 🟣 |
-| Branch a conversation | `fork()` (harness sessions fork too) | ✅ 🟣 |
-| Projects and chat history | sessions with `ownerId`, `metadata` and listing | ✅ 🟣 |
-| Chat titles | automatic, or from a model | ✅ 🟣 |
-| Attachments (images, PDFs) | `file` parts | ✅ 🟣 |
-| Stop | `abort` and `stop` | ✅ 🟣 |
-| Pick up where you left off | reconnect by `seq`, event log | ✅ 🟣 |
-| Memory | `memoryTool` (Anthropic's memory commands) | ✅ 🟣 |
-| Context window indicator | `context-usage` events, `chat.contextUsage` | ✅ 🟣 (Codex: estimates only) |
-| Page and selection context | `getContext` + `clientContext()` provider | ✅ 🟣 |
-| Ask the user questions | `ask_user` + Questionnaire | ✅ 🟣 |
-| Artifacts | a `data` part from `ctx.emit({ name: "artifact" })` and your renderer | ✅ 🟣 |
-| Citations and web search | provider tools through `aiSdk`; Codex `webSearch`; Claude Code WebSearch with `builtinTools` | ✅ 🟣 |
+| Claude feature | ai-kit |
+| --- | --- |
+| Streaming text and thinking | reasoning parts, `effort`, `reasoningSummary` |
+| Edit a message, retry, version arrows | `edit`, `regenerate`, `versions`, `switchBranch` |
+| Branch a conversation | `fork()` |
+| Projects and chat history | sessions with `ownerId`, `metadata` and listing |
+| Chat titles | automatic, or from a model |
+| Attachments (images, PDFs) | `file` parts |
+| Stop | `abort` and `stop` |
+| Pick up where you left off | reconnect by `seq`, event log |
+| Memory | `memoryTool` (Anthropic's memory commands) |
+| Context window indicator | `context-usage` events, `chat.contextUsage` |
+| Page and selection context | `getContext` + `clientContext()` provider |
+| Ask the user questions | `ask_user` + Questionnaire |
+| Artifacts | a `data` part from `ctx.emit({ name: "artifact" })` and your renderer |
+| Citations and web search | server tools in a tool's `provider` field |
 
 ## Agents (Claude Code and the Agent SDK)
 
-| Claude Code | ai-kit | |
-| --- | --- | --- |
-| Tools and MCP | `tool`, `toolkit`, `mcpPlugin` | ✅ 🟣 |
-| Permission modes and rules | `default` / `ask` / `plan` / `auto`; `allow`, `deny`, `ask` rules with `tool(pattern)` | ✅ 🟣 (Codex: own tools limited by sandbox) |
-| "Always allow" | `remember: true` | ✅ 🟣 |
-| Hooks (PreToolUse, PostToolUse, Stop, UserPromptSubmit, PreCompact, SubagentStart/Stop) | `beforeToolCall`, `afterToolCall`, `onStop`, `onUserMessage`, `beforeCompact`, `onSubagentStart/End` | ✅ 🟣 |
-| Subagents | `subagents` + `task`, child sessions, parallel | ✅ 🟣 |
-| Skills | Agent Skills folders, loaded on demand, with tools | ✅ 🟣 |
-| Slash commands | `defineCommand` | ✅ 🟣 |
-| Plugins | `definePlugin` | ✅ 🟣 |
-| Todo list | `todo_write`, `todosOf` (Codex todo lists map to the same part) | ✅ 🟣 |
-| Compaction | tool-output clearing, then summaries | ✅ (harnesses use their own) |
-| Tool search | `defer` + `search_tools`, pluggable index | ✅ (harnesses use their own) |
-| Code execution with tools ("code mode") | `codeMode` + `workerSandbox` | ✅ |
-| Structured output | `output` schemas | ✅ 🟣 |
-| Budgets | `maxSteps`, `maxCostUsd`, `maxTokens`, `timeoutMs` | ✅ (🟣 cost reported by Claude Code) |
-| Sessions: resume, fork | stored trees; harness ids in state | ✅ 🟣 |
-| File, search and shell tools | `fileTools`, `shellTool` (node), or Claude Code's built-ins | ✅ 🟣 |
+| Claude Code | ai-kit |
+| --- | --- |
+| Tools and MCP | `tool`, `toolkit`, `mcpPlugin` |
+| Permission modes and rules | `default` / `ask` / `plan` / `auto`; `allow`, `deny`, `ask` rules with `tool(pattern)` |
+| "Always allow" | `remember: true` |
+| Hooks (PreToolUse, PostToolUse, Stop, UserPromptSubmit, PreCompact, SubagentStart/Stop) | `beforeToolCall`, `afterToolCall`, `onStop`, `onUserMessage`, `beforeCompact`, `onSubagentStart/End` |
+| Subagents | `subagents` + `task`, child sessions, parallel |
+| Skills | Agent Skills folders, loaded on demand, with tools |
+| Slash commands | `defineCommand` |
+| Plugins | `definePlugin` |
+| Todo list | `todo_write`, `todosOf` |
+| Compaction | tool-output clearing, then summaries |
+| Tool search | `defer` + `search_tools`, pluggable index |
+| Code execution with tools ("code mode") | `codeMode` + `workerSandbox` |
+| Structured output | `output` schemas |
+| Budgets | `maxSteps`, `maxCostUsd`, `maxTokens`, `timeoutMs` |
+| Sessions: resume, fork | stored message trees |
+| File, search and shell tools | `fileTools`, `shellTool` (node) |
 
 ## API features
 
 | Claude API | ai-kit |
 | --- | --- |
-| Prompt caching | Automatic breakpoints on Anthropic models (`aiSdk`) |
-| Adaptive thinking, effort | `settings.effort`; `providerOptions.anthropic` for the rest |
-| Fallback on errors | `fallbackModels` |
-| Server tools (web search, web fetch, code execution) | `tool({ provider: anthropic.tools... })` |
+| Prompt caching | Automatic breakpoints (`claude`, and `aiSdk` on Anthropic models) |
+| Adaptive thinking, effort | `settings.effort`, `reasoningSummary`; `claude({ thinking })` or `providerOptions.anthropic` for the rest |
+| Fallback on errors and refusals | `fallbackModels`; `claude({ fallbacks: "default" })` for server-side refusal fallback |
+| Server tools (web search, web fetch, code execution) | `tool({ provider: { type: "web_search_20260209" } })`; `pause_turn` is resumed for you |
 | Token counting and cost | `usage` per step and per run, priced from `defaultPricing` |
-| Batches | Not wrapped. Call the AI SDK or the Anthropic SDK directly. |
+| Batches | Not wrapped. Call the Anthropic SDK directly. |
 | Files API | Not wrapped. Pass files as parts, or URLs. |
 
 ## Not built yet

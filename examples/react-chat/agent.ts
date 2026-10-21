@@ -1,12 +1,10 @@
-import { anthropic } from "@ai-sdk/anthropic"
 import { clientContext, currentTime, defineAgent, defineCommand, defineContext, definePlugin, jsonSchema, tool, toolkit } from "@alexandernygard/ai-kit"
-import { aiSdk } from "@alexandernygard/ai-kit-ai-sdk"
-import { claudeAgent } from "@alexandernygard/ai-kit-claude-agent"
+import { claude } from "@alexandernygard/ai-kit-anthropic"
 import { loadSkills } from "@alexandernygard/ai-kit-node"
 
-/** With ANTHROPIC_API_KEY, call the API; without it, run on your Claude subscription. */
-const model = process.env.ANTHROPIC_API_KEY ? aiSdk(anthropic("claude-opus-5-5")) : claudeAgent({ model: "claude-opus-5-5" })
-const cheap = process.env.ANTHROPIC_API_KEY ? aiSdk(anthropic("claude-haiku-5-5")) : claudeAgent({ model: "claude-haiku-5-5" })
+/** The Claude API, with credentials from ANTHROPIC_API_KEY or an `ant auth login` profile. */
+const model = claude("claude-opus-5-5")
+const cheap = claude("claude-haiku-5-5")
 
 const getWeather = tool({
   name: "get_weather",

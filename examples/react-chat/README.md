@@ -7,7 +7,7 @@ pnpm build                                   # from the repo root, once
 pnpm --filter example-react-chat dev         # API on :8787, app on :5173
 ```
 
-Without `ANTHROPIC_API_KEY` the agent runs on your Claude subscription through Claude Code (log in with `claude` first). With the key set, it uses the Anthropic API through the AI SDK. Sessions are saved in `.ai-kit/`.
+The agent calls the Claude API through `@alexandernygard/ai-kit-anthropic`. Set `ANTHROPIC_API_KEY`, or log in once with `ant auth login`. Sessions are saved in `.ai-kit/`.
 
 - [agent.ts](agent.ts): agent, tools, toolkit, plugin, command, subagent
 - [server.ts](server.ts): kit, file store, HTTP handler with auth

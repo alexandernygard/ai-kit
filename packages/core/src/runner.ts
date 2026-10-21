@@ -4,11 +4,8 @@ import { type CodeModeOptions, runCodeTool } from "./code-mode"
 import { COMPACTION_KEY, type CompactionState, estimateRequestTokens, estimateTokens, NUDGE_PART, summarize, toModelTurns } from "./context"
 import { ACTIVE_TOOLS_KEY, type DisclosureOptions, searchToolsTool, toolkitsPrompt, type ToolIndexEntry } from "./disclosure"
 import {
-  type BridgedTool,
   type Driver,
   driverLabel,
-  type HarnessDriver,
-  type HarnessPermission,
   type ModelDriver,
   type ModelRequest,
   type ModelSettings,
@@ -25,7 +22,7 @@ import type { Run, ToolResponse } from "./run"
 import { type JSONSchema, type Schema, toJsonSchema, validate } from "./schema"
 import { LOADED_SKILLS_KEY, type Skill, skillsPrompt, skillTools } from "./skills"
 import type { SessionRecord, Store } from "./store/types"
-import { errorOutput, type StateAccess, type Tool, type ToolContext, type Toolkit, toModelOutput, toToolSpec, tool } from "./tools"
+import { type StateAccess, type Tool, type ToolContext, type Toolkit, toModelOutput, toToolSpec, tool } from "./tools"
 import { addUsage, contextWindowFor, costOf, emptyUsage, type ModelPrice, priceFor, type Usage } from "./usage"
 import { jsonSchema } from "./schema"
 import type { Instructions } from "./agent"
@@ -34,9 +31,6 @@ import { type ContextProvider, renderContext, type ResolvedContext } from "./con
 import type { ContextUsage } from "./events"
 
 export const REMEMBERED_TOOLS_KEY = "ai-kit.allowedTools"
-export const HARNESS_SESSIONS_KEY = "ai-kit.harnessSessions"
-/** Set on forks so the next harness turn forks the harness session too. */
-export const HARNESS_FORK_KEY = "ai-kit.harnessFork"
 
 /** An agent with its plugins and kit-wide additions merged in. */
 export interface ResolvedAgent<Ctx = any> {
@@ -68,7 +62,7 @@ export interface RunOptions<Ctx = any> {
    * What happens when a call needs an approval or a client tool's output.
    * - `suspend` (default for model drivers): the run ends with `awaiting-input`; call
    *   `session.resume()` with the answers. Survives restarts and suits serverless.
-   * - `wait`: the run pauses in memory until `run.respond()`. Harness drivers always wait.
+   * - `wait`: the run pauses in memory until `run.respond()`.
    */
   approvalMode?: "wait" | "suspend"
   /** Decide approvals in code instead of pausing. */
@@ -274,8 +268,7 @@ class RunContext {
       })
       await this.resolved.hooks.notify("onRunStart", this.hookCtx)
 
-      if (this.driver.kind === "harness") await this.runHarness(this.driver)
-      else await this.runModel(this.driver)
+      await this.runModel(this.driver)
     } catch (e) {
       if (this.signal.aborted) {
         this.finishReason = this.timedOut ? "budget" : "aborted"
@@ -345,12 +338,9 @@ class RunContext {
     const deferredEntries: ToolIndexEntry[] = []
     const visible: Tool[] = []
 
-    // A harness gets its tool list once per run, so tools can't be loaded mid-run. Bridge them
-    // all; Claude Code and Codex defer large MCP tool sets with their own tool search.
-    const harness = driver.kind === "harness"
     const add = (t: Tool, kit?: Toolkit) => {
       all.push(t)
-      const deferred = !harness && (t.defer || kit?.defer)
+      const deferred = t.defer || kit?.defer
       if (deferred && !active.has(t.name)) deferredEntries.push({ tool: t, toolkit: kit })
       else visible.push(t)
     }
@@ -367,7 +357,7 @@ class RunContext {
     const builtins: Tool[] = []
     if (this.agent.builtins?.askUser) builtins.push(askUserTool())
     if (this.agent.builtins?.todos) builtins.push(todoTool())
-    if (r.skills.length && !(driver.kind === "harness" && driver.handles?.skills)) {
+    if (r.skills.length) {
       builtins.push(
         ...skillTools(r.skills, (s) => {
           loadedSkills.add(s.name)
@@ -375,7 +365,7 @@ class RunContext {
         }),
       )
     }
-    if (r.subagents.length && !(driver.kind === "harness" && driver.handles?.subagents)) builtins.push(this.taskTool())
+    if (r.subagents.length) builtins.push(this.taskTool())
 
     const codeMode = this.agent.codeMode
     let modelTools: Tool[]
@@ -395,7 +385,7 @@ class RunContext {
     }
 
     // Provider JSON mode only works without tools; otherwise answer through a tool.
-    this.nativeOutputNow = !!this.outputSchema && this.nativeOutput(driver) && (driver.kind === "harness" || modelTools.length === 0)
+    this.nativeOutputNow = !!this.outputSchema && this.nativeOutput(driver) && modelTools.length === 0
     if (this.outputSchema && !this.nativeOutputNow) modelTools.push(structuredOutputTool(this.outputSchema))
 
     this.tools = new Map([...all, ...modelTools].map((t) => [t.name, t]))
@@ -417,7 +407,7 @@ class RunContext {
   }
 
   private nativeOutput(driver: Driver) {
-    return driver.kind === "harness" || driver.capabilities?.structuredOutput === true
+    return driver.capabilities?.structuredOutput === true
   }
 
   private async systemPrompt(hasDeferred: boolean, loadedSkills: Set<string>, contexts: ResolvedContext[] = []): Promise<SystemBlock[]> {
@@ -434,8 +424,8 @@ class RunContext {
       if (i) stable.push(await resolve(i))
     }
     const skills = this.resolved.skills
-    if (skills.length && !(this.driver.kind === "harness" && this.driver.handles?.skills)) stable.push(skillsPrompt(skills))
-    const kits = this.driver.kind === "harness" ? "" : toolkitsPrompt(this.resolved.toolkits, hasDeferred)
+    if (skills.length) stable.push(skillsPrompt(skills))
+    const kits = toolkitsPrompt(this.resolved.toolkits, hasDeferred)
     if (kits) stable.push(kits)
     if (this.resolved.subagents.length) {
       stable.push(
@@ -445,7 +435,7 @@ class RunContext {
     const dynamic: string[] = []
     const active = new Set((this.state[ACTIVE_TOOLS_KEY] as string[] | undefined) ?? [])
     for (const k of this.resolved.toolkits) {
-      if (k.instructions && (!k.defer || this.driver.kind === "harness" || k.tools.some((t) => active.has(t.name)))) dynamic.push(`# ${k.name}\n${k.instructions}`)
+      if (k.instructions && (!k.defer || k.tools.some((t) => active.has(t.name)))) dynamic.push(`# ${k.name}\n${k.instructions}`)
     }
     if (this.outputSchema && !this.nativeOutputNow) {
       dynamic.push(`When you're done, call \`${STRUCTURED_OUTPUT_TOOL}\` with your final answer.`)
@@ -610,14 +600,14 @@ class RunContext {
     const fromCompaction = this.agent.compaction ? this.agent.compaction.contextWindow : undefined
     return (
       fromCompaction ??
-      (d.kind === "model" ? d.capabilities?.contextWindow : d.contextWindow) ??
+      d.capabilities?.contextWindow ??
       contextWindowFor(d.modelId, this.host.contextWindows) ??
       200_000
     )
   }
 
   private compactAt(): number | undefined {
-    if (this.agent.compaction === false || this.driver.kind === "harness") return undefined
+    if (this.agent.compaction === false) return undefined
     return this.agent.compaction?.threshold ?? 0.8
   }
 
@@ -698,7 +688,7 @@ class RunContext {
 
   /** Stream one model call, trying fallback models if it fails before producing anything. */
   private async streamStep(driver: ModelDriver, request: ModelRequest, step: number) {
-    const drivers = [driver, ...(this.agent.fallbackModels ?? []).filter((d): d is ModelDriver => d.kind === "model")]
+    const drivers = [driver, ...(this.agent.fallbackModels ?? [])]
     let lastError: unknown
     for (const d of drivers) {
       const before = this.message.parts.length
@@ -828,7 +818,6 @@ class RunContext {
   }
 
   private approvalMode(): "wait" | "suspend" {
-    if (this.driver.kind === "harness") return "wait"
     return this.input.options.approvalMode ?? "suspend"
   }
 
@@ -888,7 +877,12 @@ class RunContext {
       return this.applyApproval(call, t, response)
     }
 
-    const v = await validate(t.input as Schema, call.input)
+    // Models always send an object. Anything else is input the driver couldn't parse, and JSON
+    // Schema tools have no validator to catch it.
+    const v =
+      call.input && typeof call.input === "object" && !Array.isArray(call.input)
+        ? await validate(t.input as Schema, call.input)
+        : { success: false as const, error: "it wasn't a valid JSON object." }
     if (!v.success) {
       this.emit({ type: "tool-result", toolCallId: call.toolCallId, output: `Invalid input: ${v.error}`, isError: true })
       return null
@@ -1127,147 +1121,6 @@ class RunContext {
       },
     })
   }
-
-  // ----------------------------------------------------------------------------------------
-  // Harness
-
-  private async runHarness(driver: HarnessDriver) {
-    const { modelTools, hasDeferred, loadedSkills } = this.assembleTools(driver)
-    // A harness takes one system prompt per run, so all context goes there.
-    const contexts = (await this.resolveContext(0)).map((c) => ({ ...c, placement: "system" as const }))
-    const system = (await this.systemPrompt(hasDeferred, loadedSkills, contexts)).map((b) => b.text).join("\n\n")
-    const sessions = (this.state[HARNESS_SESSIONS_KEY] as Record<string, string> | undefined) ?? {}
-    const resumeId = sessions[driver.provider]
-    const bridged: BridgedTool[] = modelTools
-      .filter((t) => t.runtime === "server" || t.runtime === "client")
-      .map((t) => ({
-        spec: toToolSpec(t),
-        execute: async (input, call) => this.bridgedCall(t, input, call.toolCallId),
-      }))
-    const userMessage = this.input.userMessage
-    if (!userMessage) throw new Error("Harness runs need a user message")
-
-    for await (const e of driver.run({
-      input: userMessage,
-      history: this.input.history,
-      resumeId,
-      fork: !!resumeId && this.state[HARNESS_FORK_KEY] === true,
-      system,
-      tools: bridged,
-      canUseTool: (call) => this.harnessPermission(call),
-      output: this.outputSchema ? { schema: this.outputSchema } : undefined,
-      settings: { ...this.agent.settings, ...this.input.options.settings },
-      signal: this.signal,
-      context: this.input.options.context,
-    })) {
-      switch (e.type) {
-        case "harness-session": {
-          this.stateAccess().set(HARNESS_SESSIONS_KEY, { ...sessions, [driver.provider]: e.id })
-          this.stateAccess().delete(HARNESS_FORK_KEY)
-          break
-        }
-        case "step-start":
-          this.step++
-          this.emit({ type: "step-start", step: this.step - 1 })
-          break
-        case "step-finish":
-          this.emit({ ...e, step: Math.max(0, this.step - 1) })
-          if (driver.handles?.contextReadings !== false) this.emitMeasured(Math.max(0, this.step - 1), e.usage)
-          break
-        case "text-delta":
-          this.emit({ ...e, partId: this.partId(`h:t:${e.partId}`, "txt") })
-          break
-        case "text-end":
-          this.emit({ ...e, partId: this.partId(`h:t:${e.partId}`, "txt") })
-          break
-        case "reasoning-delta":
-          this.emit({ ...e, partId: this.partId(`h:r:${e.partId}`, "rsn") })
-          break
-        case "reasoning-end":
-          this.emit({ ...e, partId: this.partId(`h:r:${e.partId}`, "rsn") })
-          break
-        case "finish": {
-          this.usage = this.priced(e.usage, driver)
-          if (e.output !== undefined && this.outputValidator) {
-            const v = await validate(this.outputValidator as Schema, e.output)
-            if (v.success) {
-              this.output = v.value
-              this.outputSet = true
-            }
-          }
-          return this.end(e.finishReason === "stop" ? "stop" : e.finishReason)
-        }
-        case "error":
-          this.error = e.error
-          this.emit({ type: "error", error: e.error })
-          return this.end("error")
-        default:
-          this.emit(e)
-      }
-    }
-    if (this.signal.aborted) return this.end(this.timedOut ? "budget" : "aborted")
-  }
-
-  /** A harness called one of our tools over the bridge. */
-  private async bridgedCall(t: Tool, input: unknown, toolCallId: string) {
-    this.emit({ type: "tool-call", toolCallId, toolName: t.name, input, runtime: t.runtime, title: safeTitle(t, input) })
-    const r = await this.runSingle({ toolCallId, toolName: t.name, input }, t)
-    return { output: r.isError ? errorOutput(stringify(r.output)) : toModelOutput(t, r.output), isError: r.isError }
-  }
-
-  /** Full pipeline for one call outside the model loop, always waiting for answers. */
-  private async runSingle(call: ToolCallInfo, t: Tool): Promise<{ output: unknown; isError: boolean }> {
-    const finish = (output: unknown, isError: boolean) => {
-      this.emit({ type: "tool-result", toolCallId: call.toolCallId, output, isError })
-      return { output, isError }
-    }
-    if (t.runtime === "client") {
-      const r = await this.awaitClient(call, undefined, false)
-      if (r === "pending") return finish("No client available to run this tool.", true)
-      return finish(r.output, !!r.isError)
-    }
-    const v = await validate(t.input as Schema, call.input)
-    if (!v.success) return finish(`Invalid input: ${v.error}`, true)
-    let c: ToolCallInfo = { ...call, input: v.value }
-    const d = await this.decide(c, t)
-    if (d.decision === "deny") return finish(d.reason, true)
-    if (d.decision === "allow") c = { ...c, input: d.input ?? c.input }
-    else {
-      const answer = await this.askApproval(c, d.reason, true)
-      if (answer === "pending") return finish("Approval required.", true)
-      const ok = this.applyApproval(c, t, answer)
-      if (!ok) return { output: "The user denied this.", isError: true }
-      c = ok.call
-    }
-    const r = await this.invoke(c, t)
-    if (t.name === STRUCTURED_OUTPUT_TOOL && !r.isError) {
-      this.output = c.input
-      this.outputSet = true
-    }
-    return finish(r.output, r.isError)
-  }
-
-  /** Permission for the harness's own tools (Bash, Edit, ...). */
-  private async harnessPermission(call: { toolCallId: string; toolName: string; input: unknown }): Promise<HarnessPermission> {
-    const d = await this.decide(call, undefined)
-    if (d.decision === "deny") return { behavior: "deny", message: d.reason }
-    if (d.decision === "allow") return { behavior: "allow", input: d.input }
-    const answer = await this.askApproval(call, d.reason, true)
-    if (answer === "pending") return { behavior: "deny", message: "Approval required." }
-    const approved = "approved" in answer ? answer.approved : true
-    this.emit({ type: "tool-approval-response", toolCallId: call.toolCallId, approved, message: "approved" in answer ? answer.message : undefined })
-    if (!approved) return { behavior: "deny", message: ("approved" in answer && answer.message) || "The user denied this." }
-    if ("remember" in answer && answer.remember) {
-      const list = new Set((this.state[REMEMBERED_TOOLS_KEY] as string[] | undefined) ?? [])
-      list.add(call.toolName)
-      this.stateAccess().set(REMEMBERED_TOOLS_KEY, [...list])
-    }
-    return { behavior: "allow", input: "approved" in answer && answer.input !== undefined ? answer.input : call.input }
-  }
-}
-
-function stringify(v: unknown): string {
-  return typeof v === "string" ? v : JSON.stringify(v)
 }
 
 function safeTitle(t: Tool | undefined, input: unknown): string | undefined {

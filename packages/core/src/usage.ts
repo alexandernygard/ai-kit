@@ -4,7 +4,7 @@ export interface Usage {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   reasoningTokens?: number
-  /** Cost in USD when known (harnesses report it; model drivers use the pricing table). */
+  /** Cost in USD: reported by the driver, or worked out from the pricing table. */
   costUsd?: number
 }
 

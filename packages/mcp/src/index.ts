@@ -1,5 +1,4 @@
 import {
-  type BridgedTool,
   definePlugin,
   jsonSchema,
   type JSONSchema,
@@ -12,6 +11,7 @@ import {
   toModelOutput,
   toToolSpec,
   type ToolResultContent,
+  type ToolSpec,
 } from "@alexandernygard/ai-kit"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -161,28 +161,29 @@ function fromMcpContent(res: CallToolResult): ToolResultContent {
 // ---------------------------------------------------------------------------------------------
 // ai-kit tools as an MCP server
 
-/** What `createMcpServer` serves: bridged tools from a harness run, or plain tools. */
-export type ServedTool = BridgedTool | Tool
+interface ServedTool {
+  spec: ToolSpec
+  execute(input: unknown, call: { toolCallId: string; signal: AbortSignal }): Promise<{ output: ToolResultContent; isError: boolean }>
+}
 
 export interface CreateMcpServerOptions {
   name?: string
   version?: string
   instructions?: string
-  /** For plain tools: the context their `execute` gets. */
+  /** The context each tool's `execute` gets. */
   toolContext?: (call: { toolName: string; toolCallId: string; signal: AbortSignal }) => Partial<ToolContext>
 }
 
 /**
- * An MCP server for ai-kit tools, with JSON Schemas passed through as-is. Harness drivers use
- * it to give the Claude Agent SDK and Codex your tools; you can also serve it to Claude Desktop
- * or any MCP client with `mcpHttpHandler`.
+ * An MCP server for ai-kit tools, with JSON Schemas passed through as-is. Serve it to Claude
+ * Desktop, Claude Code or any MCP client with `mcpHttpHandler`.
  */
-export function createMcpServer(tools: ServedTool[], options: CreateMcpServerOptions = {}): McpServer {
+export function createMcpServer(tools: Tool[], options: CreateMcpServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: options.name ?? "ai-kit", version: options.version ?? "0.1.0" },
     { capabilities: { tools: {} }, instructions: options.instructions },
   )
-  const entries = tools.map((t) => ("spec" in t ? t : plainToBridged(t, options.toolContext)))
+  const entries = tools.map((t) => served(t, options.toolContext))
   const byName = new Map(entries.map((e) => [e.spec.name, e]))
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: entries.map((e) => ({ name: e.spec.name, description: e.spec.description, inputSchema: { type: "object", ...e.spec.inputSchema } as never })),
@@ -197,7 +198,7 @@ export function createMcpServer(tools: ServedTool[], options: CreateMcpServerOpt
   return server
 }
 
-function plainToBridged(t: Tool, ctx: CreateMcpServerOptions["toolContext"]): BridgedTool {
+function served(t: Tool, ctx: CreateMcpServerOptions["toolContext"]): ServedTool {
   return {
     spec: toToolSpec(t),
     async execute(input, call) {

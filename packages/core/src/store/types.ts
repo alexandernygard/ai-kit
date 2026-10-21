@@ -15,7 +15,7 @@ export interface SessionRecord {
   parentToolCallId?: string
   /** Set for forks. */
   forkedFrom?: { sessionId: string; messageId: string | null }
-  /** Runtime state: loaded tools and skills, todos, harness session ids, remembered approvals. */
+  /** Runtime state: loaded tools and skills, todos, remembered approvals. */
   state: Record<string, unknown>
   metadata?: Record<string, unknown>
   /** Set while a run is active. */

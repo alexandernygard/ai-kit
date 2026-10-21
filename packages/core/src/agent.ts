@@ -83,7 +83,7 @@ export interface Agent<Ctx = any> extends AgentConfig<Ctx> {
  * const support = defineAgent({
  *   name: "support",
  *   instructions: "You help customers with orders.",
- *   model: claudeAgent(),          // your Claude subscription
+ *   model: claude("claude-opus-5-5"),
  *   tools: [lookupOrder, refund],
  *   skills: [refundPolicy],
  * })

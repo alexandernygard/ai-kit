@@ -64,7 +64,7 @@ export interface AgentInfo {
   name: string
   description?: string
   model: string
-  kind: "model" | "harness"
+  kind: "model"
   metadata?: Record<string, unknown>
   commands: Array<{ name: string; description: string; argumentHint?: string }>
 }

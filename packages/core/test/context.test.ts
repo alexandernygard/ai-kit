@@ -11,7 +11,7 @@ import {
   type AgentEvent,
   type ModelTurn,
 } from "../src/index"
-import { collect, mockHarness, mockModel } from "../src/testing"
+import { collect, mockModel } from "../src/testing"
 
 const textOfTurn = (t: ModelTurn | undefined) => JSON.stringify(t?.content ?? [])
 
@@ -133,17 +133,6 @@ describe("context providers", () => {
     expect(turns).not.toContain("secret")
     expect(seenByTool).toEqual({ route: "/orders/A1", secret: "x" })
   })
-
-  it("puts all context in the system prompt for harness drivers", async () => {
-    const harness = mockHarness(async function* (req) {
-      yield { type: "text-delta", partId: "x", delta: req.system }
-      yield { type: "finish", finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } }
-    })
-    const kit = createKit({ agents: [defineAgent({ name: "a", model: harness, contextProviders: [currentTime({ timeZone: "Europe/Oslo" })] })] })
-    const r = await (await kit.createSession()).send("hi").result
-    expect(r.text).toContain('<context name="current_time">')
-    expect(r.text).toContain("Europe/Oslo")
-  })
 })
 
 describe("context usage", () => {
@@ -177,19 +166,5 @@ describe("context usage", () => {
     const kit = createKit({ agents: [defineAgent({ name: "a", model })], contextWindows: { "acme-": 64_000 } })
     const events = await collect((await kit.createSession()).send("hi"))
     expect(events.find((e) => e.type === "context-usage")).toMatchObject({ window: 64_000 })
-  })
-
-  it("skips provider readings for harnesses that sum a whole turn", async () => {
-    const harness = mockHarness(
-      async function* () {
-        yield { type: "step-start", step: 0 }
-        yield { type: "step-finish", step: 0, usage: { inputTokens: 5_000_000, outputTokens: 1 }, finishReason: "stop" }
-        yield { type: "finish", finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } }
-      },
-      { handles: { contextReadings: false } },
-    )
-    const kit = createKit({ agents: [defineAgent({ name: "a", model: harness })] })
-    const events = await collect((await kit.createSession()).send("hi"))
-    expect(events.some((e) => e.type === "context-usage")).toBe(false)
   })
 })

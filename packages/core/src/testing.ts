@@ -1,4 +1,4 @@
-import type { HarnessDriver, HarnessEvent, HarnessRequest, ModelDriver, ModelEvent, ModelRequest } from "./driver"
+import type { ModelDriver, ModelEvent, ModelRequest } from "./driver"
 import { emptyUsage, type Usage } from "./usage"
 
 /**
@@ -73,24 +73,6 @@ export function mockModel(
         finishReason: r.finishReason ?? (r.toolCalls?.length ? "tool-calls" : "stop"),
         usage: { ...emptyUsage(), inputTokens: 10, outputTokens: 5, ...r.usage },
       }
-    },
-  }
-}
-
-/** A harness double: `script` gets the request and yields harness events. */
-export function mockHarness(
-  script: (request: HarnessRequest) => AsyncIterable<HarnessEvent>,
-  options: { provider?: string; handles?: HarnessDriver["handles"] } = {},
-): HarnessDriver & { readonly requests: HarnessRequest[] } {
-  const requests: HarnessRequest[] = []
-  return {
-    kind: "harness",
-    provider: options.provider ?? "mock-harness",
-    handles: options.handles,
-    requests,
-    run(request) {
-      requests.push(request)
-      return script(request)
     },
   }
 }

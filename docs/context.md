@@ -27,7 +27,6 @@ The model sees each one as `<context name="user">...</context>`. A provider retu
 
 - Providers come from the kit, plugins (`contextProviders`, or `api.addContext()` in `setup`) and the agent. They run in that order, and the same name overrides an earlier one.
 - A provider that throws is skipped, and a `status` event reports `context-error`.
-- With harness drivers everything goes into the system prompt, computed once per run, because a harness takes one system prompt per turn.
 
 ### Context from the browser
 
@@ -52,15 +51,14 @@ Every model call reports how full the context window is. A `context-usage` event
   window: 1_000_000,
   ratio: 0.003,
   source: "estimate" | "provider",
-  compactAt: 0.8,                 // when compaction starts; absent for harness drivers
+  compactAt: 0.8,                 // when compaction starts; absent when compaction is off
   breakdown: { system: 812, tools: 640, messages: 1467, context: [{ name: "user", tokens: 38 }] },
 }
 ```
 
 - Estimates count about four characters per token. Provider counts are input (cached or not) plus output.
 - The latest reading is also stored on the assistant message (`message.contextUsage`). `Chat` exposes it as `state.contextUsage`, and `contextUsageOf(messages)` finds it.
-- The window comes from `compaction.contextWindow`, then the driver (`capabilities.contextWindow`, or `claudeAgent({ contextWindow })`), then a table by model id (Claude models built in; add others with `createKit({ contextWindows: { "acme-": 128_000 } })`), and finally 200 000.
-- Codex reports usage per turn rather than per call, so its runs only get estimates.
+- The window comes from `compaction.contextWindow`, then the driver (`capabilities.contextWindow`), then a table by model id (Claude models built in; add others with `createKit({ contextWindows: { "acme-": 128_000 } })`), and finally 200 000.
 
 Every tool definition, instruction and old tool output costs tokens on every call. These four features keep the context small without taking capabilities away.
 
@@ -76,8 +74,6 @@ const refund = tool({ name: "issue_refund", description: "...", keywords: ["mone
 The system prompt lists deferred toolkits by name and description. `search_tools({ query })` scores tools by name, keywords and description and loads the best matches. `{ toolkit: "github" }` loads a toolkit, and `{ names: [...] }` loads tools by name. Loaded tools stay loaded for the session (`state["ai-kit.activeTools"]`).
 
 Swap the keyword search for embeddings with `toolSearch: { index: myIndex }`, where `ToolIndex.search(query, entries, limit)` returns hits. MCP toolkits are deferred by default.
-
-With harness drivers every tool is bridged up front, because a harness takes its tool list once per run. Claude Code and Codex then defer large MCP tool sets with their own search.
 
 ## Code mode
 
@@ -141,10 +137,10 @@ Two layers, cheapest first:
 2. **Summarising.** When the request reaches `threshold` (0.8) of `contextWindow`, older messages are summarised. The last `keepRecent` (6) stay word for word. The summary is stored in session state and stands in for those messages on every later call, while the UI keeps the full history.
 
 ```ts
-compaction: { contextWindow: 200_000, threshold: 0.8, keepRecent: 6, model: aiSdk(anthropic("claude-haiku-5-5")) }
+compaction: { contextWindow: 200_000, threshold: 0.8, keepRecent: 6, model: claude("claude-haiku-5-5") }
 ```
 
-`beforeCompact` hooks can veto it, and `session.compact()` runs it on demand. Harness drivers use their own compaction.
+`beforeCompact` hooks can veto it, and `session.compact()` runs it on demand.
 
 ## Memory across sessions
 

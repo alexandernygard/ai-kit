@@ -4,7 +4,7 @@ import { createId } from "./id"
 import type { Kit } from "./kit"
 import { leafOf, type Message, pathTo, siblingsOf, type UserContent, userMessage } from "./messages"
 import type { Run, ToolResponse } from "./run"
-import { HARNESS_FORK_KEY, type RunOptions, startRun } from "./runner"
+import { type RunOptions, startRun } from "./runner"
 import type { SessionRecord } from "./store/types"
 
 export interface SendOptions<Ctx = any> extends RunOptions<Ctx> {
@@ -180,8 +180,6 @@ export class Session<Ctx = any> {
     const ids = new Map<string, string>()
     for (const m of path) ids.set(m.id, createId("msg"))
     const state = { ...this.rec.state }
-    // The model can resume its own harness session from here, so keep the ids and fork them.
-    if (state["ai-kit.harnessSessions"]) state[HARNESS_FORK_KEY] = true
     delete state[COMPACTION_KEY]
     const child = await this.kit.createSession({
       agent: this.rec.agent,
@@ -208,8 +206,7 @@ export class Session<Ctx = any> {
   async compact(options: { keepRecent?: number; signal?: AbortSignal } = {}): Promise<string | null> {
     const resolved = await this.kit.resolve(this.rec.agent)
     const driver = resolved.agent.compaction ? resolved.agent.compaction.model : undefined
-    const model = driver ?? (resolved.agent.model.kind === "model" ? resolved.agent.model : undefined)
-    if (!model) throw new Error("Compaction needs a model driver; this agent uses a harness that compacts on its own.")
+    const model = driver ?? resolved.agent.model
     const path = await this.history()
     const keep = options.keepRecent ?? 4
     const candidates = path.slice(0, Math.max(0, path.length - keep))

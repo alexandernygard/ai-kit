@@ -10,7 +10,7 @@ await session.update({ title: "Refund for A1" })
 await session.delete()   // and its subagent sessions
 ```
 
-Titles default to the start of the first message. `createKit({ title: aiSdk(anthropic("claude-haiku-5-5")) })` writes them with a model instead, and `title: false` turns titles off.
+Titles default to the start of the first message. `createKit({ title: claude("claude-haiku-5-5") })` writes them with a model instead, and `title: false` turns titles off.
 
 ## Runs
 
@@ -54,7 +54,7 @@ await session.messages()                                // everything
 const copy = await session.fork({ messageId, title: "Try the cheaper plan" })
 ```
 
-The new session gets copies of the messages up to `messageId` (the head by default), with new ids. `forkedFrom` records where it came from. Session state comes along, except the compaction summary. With harness drivers, the next turn forks the harness session too: Claude Code forks natively, and Codex starts a new thread with the history.
+The new session gets copies of the messages up to `messageId` (the head by default), with new ids. `forkedFrom` records where it came from. Session state comes along, except the compaction summary.
 
 ## Subagent sessions
 
@@ -71,7 +71,6 @@ Tools write `ctx.state.set(key, value)`; your code writes `session.setState(key,
 | `ai-kit.allowedTools` | "always allow" approvals |
 | `ai-kit.todos` | the agent's task list |
 | `ai-kit.compaction` | summary and where it ends |
-| `ai-kit.harnessSessions` | Claude Code / Codex session ids (not sent to clients) |
 
 ## Stores
 

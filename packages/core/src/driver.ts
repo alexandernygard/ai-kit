@@ -4,19 +4,13 @@ import type { JSONSchema } from "./schema"
 import type { Usage } from "./usage"
 
 /*
- * Drivers connect ai-kit to models. There are two kinds:
- *
- * - A ModelDriver makes one model call. ai-kit runs the agent loop around it, so every feature
- *   (approvals, client tools, code mode, tool search, compaction, hooks) works. Use it for API
- *   keys through the AI SDK.
- *
- * - A HarnessDriver hands a whole turn to an agent runtime that has its own loop, such as the
- *   Claude Agent SDK (your Claude subscription) or the Codex SDK (your ChatGPT subscription).
- *   ai-kit bridges its tools in over MCP, routes them through the same permission pipeline and
- *   maps the runtime's events onto AgentEvents.
+ * A driver connects ai-kit to a model. It makes one model call; ai-kit runs the agent loop
+ * around it (tools, approvals, client tools, code mode, tool search, compaction, hooks).
+ * `claude()` from `@alexandernygard/ai-kit-anthropic` is the Claude API driver; `aiSdk()` covers
+ * every AI SDK provider.
  */
 
-export type Driver = ModelDriver | HarnessDriver
+export type Driver = ModelDriver
 
 // ---------------------------------------------------------------------------------------------
 // Model drivers
@@ -156,94 +150,8 @@ export type ModelEvent =
   | { type: "finish"; finishReason: ModelFinishReason; usage: Usage; providerMetadata?: Record<string, unknown> }
   | { type: "error"; error: unknown }
 
-// ---------------------------------------------------------------------------------------------
-// Harness drivers
-
-export interface HarnessDriver {
-  readonly kind: "harness"
-  readonly provider: string
-  readonly modelId?: string
-  /** The model's context window, for context-usage readings. */
-  readonly contextWindow?: number
-  /** Features the harness handles itself, so ai-kit doesn't add its own versions. */
-  readonly handles?: {
-    compaction?: boolean
-    subagents?: boolean
-    skills?: boolean
-    /** Set false when step usage isn't one model call (it sums a whole turn), so it can't measure context. */
-    contextReadings?: boolean
-  }
-  run(request: HarnessRequest): AsyncIterable<HarnessEvent>
-}
-
-export interface HarnessRequest {
-  /** The new user message. */
-  input: Message
-  /** The conversation so far, for harnesses that can't resume. */
-  history: Message[]
-  /** The harness's own session id from an earlier turn, to resume. */
-  resumeId?: string
-  /** Resume `resumeId` into a new harness session instead of continuing it. */
-  fork?: boolean
-  system: string
-  /** ai-kit tools to expose. `execute` runs the full permission and hook pipeline. */
-  tools: BridgedTool[]
-  /** Ask ai-kit whether a harness-native tool (Bash, Edit) may run. */
-  canUseTool: (call: { toolCallId: string; toolName: string; input: unknown }) => Promise<HarnessPermission>
-  output?: { schema: JSONSchema }
-  settings: ModelSettings
-  signal: AbortSignal
-  /** App context from `send(..., { context })`. */
-  context: unknown
-}
-
-export type HarnessPermission =
-  | { behavior: "allow"; input?: unknown }
-  | { behavior: "deny"; message: string }
-
-export interface BridgedTool {
-  spec: ToolSpec
-  execute(input: unknown, call: { toolCallId: string; signal: AbortSignal }): Promise<{ output: ToolResultContent; isError: boolean }>
-}
-
-/**
- * Harness drivers emit AgentEvents for content (text, reasoning, native tool calls, steps) plus
- * a few of their own. Bridged ai-kit tools report their own events, so harnesses skip them.
- */
-export type HarnessEvent =
-  | Extract<
-      AgentEvent,
-      {
-        type:
-          | "step-start"
-          | "text-delta"
-          | "text-end"
-          | "reasoning-delta"
-          | "reasoning-end"
-          | "tool-input-start"
-          | "tool-input-delta"
-          | "tool-call"
-          | "tool-start"
-          | "tool-progress"
-          | "tool-result"
-          | "step-finish"
-          | "status"
-          | "data"
-          | "source"
-          | "file"
-        }
-    >
-  /** The harness's session id; ai-kit stores it to resume next turn. */
-  | { type: "harness-session"; id: string }
-  | { type: "finish"; finishReason: "stop" | "length" | "budget" | "error" | "aborted" | "max-steps"; usage: Usage; output?: unknown }
-  | { type: "error"; error: { message: string; code?: string } }
-
 export function isModelDriver(d: Driver): d is ModelDriver {
   return d.kind === "model"
-}
-
-export function isHarnessDriver(d: Driver): d is HarnessDriver {
-  return d.kind === "harness"
 }
 
 export function driverLabel(d: Driver): string {

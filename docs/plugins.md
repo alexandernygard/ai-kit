@@ -55,4 +55,4 @@ For one connection without a plugin, `connectMcp(config)` returns `{ toolkit, cl
 
 ## ai-kit tools as an MCP server
 
-`createMcpServer(tools)` serves ai-kit tools with their JSON Schemas as they are, and `mcpHttpHandler(makeServer, { authorize })` serves that statelessly over streamable HTTP. The Claude and Codex drivers use the same code to bridge tools.
+`createMcpServer(tools)` serves ai-kit tools with their JSON Schemas as they are, and `mcpHttpHandler(makeServer, { authorize })` serves that statelessly over streamable HTTP. Point Claude Desktop, Claude Code or any MCP client at it to use your tools there.

@@ -60,9 +60,8 @@ export interface ReasoningPart {
  * - `server`: executed by ai-kit wherever the runner runs.
  * - `client`: executed by the browser; the run pauses until the client sends the output.
  * - `provider`: executed by the model provider (web search, code execution).
- * - `harness`: executed by an agent harness (Claude Code's Bash, Codex's shell).
  */
-export type ToolRuntime = "server" | "client" | "provider" | "harness"
+export type ToolRuntime = "server" | "client" | "provider"
 
 export type ToolState =
   | "input-streaming"

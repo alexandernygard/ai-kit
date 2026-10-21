@@ -7,8 +7,8 @@ const agent = defineAgent({
   name: "support",
   description: "Customer support",            // shown when it's offered as a subagent
   instructions: ({ context }) => `You help ${context.user.name}.`,
-  model: aiSdk(anthropic("claude-opus-5-5")),
-  fallbackModels: [aiSdk(openai("gpt-5.5"))],
+  model: claude("claude-opus-5-5"),
+  fallbackModels: [claude("claude-sonnet-5-5")],
   settings: { effort: "medium", maxOutputTokens: 16000 },
   tools: [lookupOrder, refundToolkit],
   skills: await loadSkills("./skills"),

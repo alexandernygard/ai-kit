@@ -1,26 +1,50 @@
-# Drivers: API keys and subscriptions
+# Drivers
 
-Every agent has a `model`: a driver. Swap it and nothing else changes.
+Every agent has a `model`: a driver. A driver makes one model call and ai-kit runs the loop around it, so every feature works with every driver. Swap it and nothing else changes.
 
 ```ts
-import { anthropic } from "@ai-sdk/anthropic"
-import { openai } from "@ai-sdk/openai"
+import { claude } from "@alexandernygard/ai-kit-anthropic"
 import { aiSdk } from "@alexandernygard/ai-kit-ai-sdk"
-import { claudeAgent } from "@alexandernygard/ai-kit-claude-agent"
-import { codex } from "@alexandernygard/ai-kit-codex"
+import { openai } from "@ai-sdk/openai"
 
-model: aiSdk(anthropic("claude-opus-5-5"))       // Anthropic API key
-model: aiSdk(openai("gpt-5.5"))                   // OpenAI API key
-model: aiSdk("anthropic/claude-sonnet-5-5")       // Vercel AI Gateway
-model: claudeAgent({ model: "claude-opus-5-5" })  // Claude Pro/Max subscription
-model: codex({ model: "gpt-5.5-codex" })          // ChatGPT Plus/Pro subscription
+model: claude("claude-opus-5-5")     // the Claude API, through the Anthropic SDK
+model: aiSdk(openai("gpt-5.5"))       // any AI SDK provider
+model: aiSdk("anthropic/claude-sonnet-5-5") // Vercel AI Gateway
 ```
+
+## Claude API (`claude`)
+
+Calls the Messages API with the official `@anthropic-ai/sdk`, streaming every request.
+
+```ts
+claude("claude-opus-5-5", {
+  client,                 // an Anthropic client, or a Bedrock / Vertex / Foundry one; default new Anthropic()
+  maxTokens: 64_000,      // max_tokens when the agent sets no maxOutputTokens
+  cache: { ttl: "1h" },   // prompt-cache breakpoints; default on with the 5-minute TTL
+  thinking: { type: "adaptive", display: "summarized" },
+  fallbacks: "default",   // server-side fallback on refusals (off by default, see below)
+  params: { inference_geo: "us" }, // merged into every request
+})
+```
+
+- **Credentials.** `ANTHROPIC_API_KEY`, or a profile from `ant auth login`. Pass `clientOptions` or your own `client` for anything else.
+- **Prompt caching.** A breakpoint goes after the stable system prompt (instructions, skills, toolkits, subagents) and on the newest message, so each step reads the previous one from cache. `usage.cacheReadTokens` shows the hits. Turn it off with `{ cache: false }`.
+- **Thinking and effort.** Current models think adaptively when `thinking` is left out. `settings.effort` maps to `output_config.effort` (`minimal` becomes `low`). Claude Opus 5.5 defaults to `medium`, so set effort on agents that need more. `reasoningSummary: true` asks for readable thinking summaries; without it thinking streams empty. Thinking blocks are stored with their signatures and sent back unchanged.
+- **Tools.** Tool inputs stream as they're generated (`eager_input_streaming`). The API doesn't check them in that mode, so ai-kit validates each one against its schema and rejects input that isn't a JSON object. Turn it off with `eagerInputStreaming: false`.
+- **Server tools.** Put the tool definition in an ai-kit tool's `provider` field. Results come back as provider-executed tool parts and are sent back to the API unchanged next turn. Long server-tool turns that end in `pause_turn` are resumed within the step.
+  ```ts
+  tool({ name: "web_search", description: "Search the web", provider: { type: "web_search_20260209", max_uses: 5 } })
+  ```
+- **Structured output.** Uses `output_config.format` when the agent has no tools; otherwise the `structured_output` tool.
+- **Refusals.** `stop_reason: "refusal"` ends the step with finish reason `content-filter`. `fallbacks: "default"` lets the API retry on another model. It's off by default because a fallback in the middle of a reply leaves a boundary block that has to be sent back in place, and ai-kit's message format doesn't keep it yet.
+- **Forced tool choice.** `toolChoice: "required"` or `{ tool }` returns a 400 on Claude Opus 5.5, Sonnet 5.5 and Fable 5.1. Use `"auto"` and say which tool to use in the prompt.
+- **Overrides.** `settings.providerOptions.anthropic` is merged into the request body last, and `settings.headers` go on each request.
 
 ## AI SDK (`aiSdk`)
 
-Works with any AI SDK `LanguageModel`. ai-kit runs the loop, so every feature is available.
+Works with any AI SDK `LanguageModel`.
 
-- **Prompt caching.** On Anthropic models it marks the stable system prompt and the newest message for caching, so each turn reads the previous one from cache. Turn it off with `{ cache: false }`, or use `{ cache: { ttl: "1h" } }`.
+- **Prompt caching.** On Anthropic models it marks the stable system prompt and the newest message for caching. Turn it off with `{ cache: false }`, or use `{ cache: { ttl: "1h" } }`.
 - **Effort.** `settings.effort` maps to the AI SDK's `reasoning` option. `reasoningSummary: true` asks Anthropic models for readable thinking summaries.
 - **Provider tools.** Put an AI SDK provider tool in an ai-kit tool's `provider` field and the provider runs it:
   ```ts
@@ -29,67 +53,17 @@ Works with any AI SDK `LanguageModel`. ai-kit runs the loop, so every feature is
 - **Structured output.** Uses the provider's JSON mode when the agent has no tools; otherwise the `structured_output` tool.
 - **Provider options.** Pass through with `settings.providerOptions` or `aiSdk(model, { providerOptions })`.
 
-## Claude Agent SDK (`claudeAgent`)
-
-Runs a turn in Claude Code. Claude Code uses whatever it's logged in with:
-
-- **Locally:** run `claude` and log in once. Your Pro or Max plan pays for usage.
-- **On a server, with your subscription:** run `claude setup-token` and pass `env: { CLAUDE_CODE_OAUTH_TOKEN }`.
-- **With an API key:** `env: { ANTHROPIC_API_KEY }`.
-
-> Anthropic's consumer terms cover your own use of your subscription. For an app that other people use, bill an API key.
-
-```ts
-claudeAgent({
-  model: "claude-opus-5-5",
-  builtinTools: "claude_code",   // Read, Edit, Bash, Grep...; default [] = only your ai-kit tools
-  claudeCodePrompt: true,        // Claude Code's system prompt + your instructions
-  cwd: "/path/to/repo",
-  permissionMode: "default",
-  settingSources: [],            // don't read ~/.claude on a server (default)
-  agents: { reviewer: { description: "...", prompt: "..." } }, // Claude Code's own subagents
-})
-```
-
-How it works:
-
-- Your ai-kit tools reach Claude Code through an in-process MCP server named `ai_kit`. Calls go through ai-kit's validation, hooks, permissions and approvals, and show up under the model's own tool-call ids.
-- Claude Code's native tools ask ai-kit through `canUseTool`, so `permissions: { ask: ["Bash"], allow: ["Read"] }` applies to them as well.
-- The harness session id is kept in session state. The next message resumes it, and `session.fork()` makes the next turn fork it.
-- Usage and `total_cost_usd` come from Claude Code. Structured output uses its `outputFormat`.
-- It uses Claude Code's own compaction. ai-kit's tool search is off here (Claude Code defers MCP tools itself), and ai-kit skills and subagents still work through the bridge.
-
-## Codex (`codex`)
-
-Runs a turn in OpenAI Codex. Leave `codex.apiKey` unset to use the ChatGPT login from `codex login`.
-
-```ts
-codex({
-  model: "gpt-5.5-codex",
-  sandboxMode: "read-only",      // or "workspace-write"
-  workingDirectory: "/path/to/repo",
-  webSearch: "live",
-})
-```
-
-How it works:
-
-- ai-kit tools go through a short-lived MCP endpoint on `127.0.0.1` with a random bearer token, created per run and closed after it. Codex is told to auto-approve that server (`default_tools_approval_mode = "approve"`) because ai-kit handles the approvals.
-- Codex's SDK has no per-call approval hook, so its own shell and file tools are limited by `sandboxMode` rather than by ai-kit permissions.
-- Shell commands show up as `shell` tool calls, file edits as `apply_patch`, the todo list as a `todos` data part, and reasoning as reasoning parts.
-- Codex threads resume by id. Codex can't fork a thread, so a fork starts a new thread with the earlier conversation as context.
-
 ## Fallbacks
 
 ```ts
-defineAgent({ model: aiSdk(anthropic("claude-opus-5-5")), fallbackModels: [aiSdk(openai("gpt-5.5"))] })
+defineAgent({ model: claude("claude-opus-5-5"), fallbackModels: [claude("claude-sonnet-5-5")] })
 ```
 
-If a step fails before producing anything, the next model driver takes the step and a `status` event says so.
+If a step fails before producing anything, the next driver takes the step and a `status` event says so.
 
 ## Writing a driver
 
-A model driver is one async generator:
+A driver is one async generator:
 
 ```ts
 const myModel: ModelDriver = {
@@ -104,4 +78,4 @@ const myModel: ModelDriver = {
 }
 ```
 
-A harness driver gets a `HarnessRequest` (input, history, `resumeId`, bridged tools, `canUseTool`) and yields `HarnessEvent`s. `mockModel` and `mockHarness` in `@alexandernygard/ai-kit/testing` are good references.
+`mockModel` in `@alexandernygard/ai-kit/testing` is a good reference.

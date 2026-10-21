@@ -1,6 +1,6 @@
 import { clientContext, createKit, defineAgent, jsonSchema, type Kit, textOf, tool } from "@alexandernygard/ai-kit"
 import { createHandler } from "@alexandernygard/ai-kit-server"
-import { mockHarness, mockModel, type MockResponse } from "@alexandernygard/ai-kit/testing"
+import { mockModel, type MockResponse } from "@alexandernygard/ai-kit/testing"
 import { describe, expect, it } from "vitest"
 import { Chat, type ChatState, directTransport, httpTransport, segments } from "../src/index"
 
@@ -144,20 +144,23 @@ describe("Chat over HTTP", () => {
     expect(chat.getSnapshot().error).toMatch(/larger than 200 bytes/)
   })
 
-  it("answers live runs (harness drivers wait in memory)", async () => {
-    const harness = mockHarness(async function* (req) {
-      const p = await req.canUseTool({ toolCallId: "n1", toolName: "Bash", input: { command: "ls" } })
-      yield { type: "text-delta", partId: "x", delta: `bash: ${p.behavior}` }
-      yield { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } }
-    })
-    const kit: Kit = createKit({ agents: [defineAgent({ name: "h", model: harness, permissions: { ask: ["Bash"] } })] })
+  it("answers live runs (code mode waits in memory)", async () => {
+    const code = "return await tools.delete_file({ path: 'a' })"
+    const model = mockModel([{ toolCalls: [{ name: "run_code", input: { code }, id: "rc" }] }, { text: "done" }])
+    const kit: Kit = createKit({ agents: [defineAgent({ name: "h", model, tools: [deleteFile], codeMode: true })] })
+    const modes: string[] = []
     const chat = new Chat({
       transport: directTransport(kit),
       onEvent: (e) => {
-        if (e.type === "tool-approval-request") void chat.approve(e.toolCallId)
+        if (e.type === "tool-approval-request") {
+          modes.push(e.mode)
+          void chat.approve(e.toolCallId)
+        }
       },
     })
-    await chat.send("list files")
-    expect(textOf(chat.getSnapshot().path.at(-1))).toBe("bash: allow")
+    await chat.send("delete a")
+    expect(modes).toEqual(["wait"])
+    expect(textOf(chat.getSnapshot().path.at(-1))).toBe("done")
+    expect(JSON.stringify(model.requests[1]!.messages.at(-1))).toContain("deleted a")
   })
 })

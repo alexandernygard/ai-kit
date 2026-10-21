@@ -14,7 +14,7 @@ import {
   type ModelTurn,
   type ToolPart,
 } from "../src/index"
-import { collect, mockHarness, mockModel } from "../src/testing"
+import { collect, mockModel } from "../src/testing"
 
 const weather = tool({
   name: "get_weather",
@@ -528,61 +528,6 @@ describe("commands, plugins, compaction", () => {
     expect(s.record.state["ai-kit.compaction"]).toMatchObject({ summary: "User asked about Oslo several times." })
     const last = model.requests.at(-1)!.messages
     expect(JSON.stringify(last[0])).toContain("summary of the earlier conversation")
-  })
-})
-
-describe("harness drivers", () => {
-  it("bridges tools, maps events and resumes the harness session", async () => {
-    const harness = mockHarness(async function* (req) {
-      yield { type: "harness-session", id: req.resumeId ? `${req.resumeId}+` : "h1" }
-      yield { type: "step-start", step: 0 }
-      const t = req.tools.find((x) => x.spec.name === "get_weather")!
-      const r = await t.execute({ city: "Bergen" }, { toolCallId: "b1", signal: req.signal })
-      yield { type: "text-delta", partId: "x", delta: `Got ${JSON.stringify(r.output)}` }
-      yield { type: "tool-call", toolCallId: "n1", toolName: "Bash", input: { command: "ls" }, runtime: "harness" }
-      const perm = await req.canUseTool({ toolCallId: "n1", toolName: "Bash", input: { command: "ls" } })
-      yield { type: "tool-result", toolCallId: "n1", output: perm.behavior, isError: false }
-      yield { type: "step-finish", step: 0, usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }
-      yield { type: "finish", finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7, costUsd: 0.01 } }
-    })
-    const kit = createKit({ agents: [defineAgent({ name: "a", model: harness, tools: [weather] })] })
-    const s = await kit.createSession()
-    const r = await s.send("weather").result
-    expect(r.text).toContain("Bergen")
-    expect(r.usage.costUsd).toBe(0.01)
-    const parts = r.message.parts.filter((p): p is ToolPart => p.type === "tool")
-    expect(parts.map((p) => [p.toolName, p.state])).toEqual([
-      ["get_weather", "output-available"],
-      ["Bash", "output-available"],
-    ])
-    await s.send("again").result
-    expect(harness.requests[1]!.resumeId).toBe("h1")
-    const fork = await s.fork()
-    await fork.send("forked").result
-    expect(harness.requests[2]!.fork).toBe(true)
-    expect(harness.requests[2]!.resumeId).toBe("h1+")
-  })
-
-  it("bridges deferred tools directly, without search_tools", async () => {
-    const hidden = tool({ name: "rare_tool", description: "rare", defer: true, execute: () => "ok" })
-    const harness = mockHarness(async function* (req) {
-      yield { type: "text-delta", partId: "x", delta: req.tools.map((t) => t.spec.name).join(",") }
-      yield { type: "finish", finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } }
-    })
-    const kit = createKit({ agents: [defineAgent({ name: "a", model: harness, tools: [weather, hidden] })] })
-    expect((await (await kit.createSession()).send("x").result).text).toBe("get_weather,rare_tool")
-  })
-
-  it("waits for approvals of harness-native tools", async () => {
-    const harness = mockHarness(async function* (req) {
-      const perm = await req.canUseTool({ toolCallId: "n1", toolName: "Bash", input: {} })
-      yield { type: "text-delta", partId: "x", delta: perm.behavior }
-      yield { type: "finish", finishReason: "stop", usage: { inputTokens: 0, outputTokens: 0 } }
-    })
-    const kit = createKit({ agents: [defineAgent({ name: "a", model: harness, permissions: { ask: ["Bash"] } })] })
-    const run = (await kit.createSession()).send("x")
-    for await (const e of run) if (e.type === "tool-approval-request") run.respond(e.toolCallId, { approved: false })
-    expect((await run.result).text).toBe("deny")
   })
 })
 
