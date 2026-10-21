@@ -24,9 +24,9 @@
 
 **Runner.** The loop, in `runner.ts`:
 
-1. Work out the tools for this step: visible tools, tools loaded by search, skill tools, built-ins, `task` for subagents, `search_tools` while anything is deferred, `run_code` in code mode, and `structured_output` when needed.
-2. Build the system prompt: stable blocks first (instructions, skills index, toolkits, subagents) marked for caching, then dynamic blocks.
-3. Turn the active path into provider-neutral `ModelTurn`s: steps split, unanswered calls dropped, old tool output trimmed, compaction applied.
+1. Work out the tools for this step: visible tools, tools loaded by search, skill tools, built-ins, `task` for subagents, `search_tools` while anything is deferred (or every deferred tool, marked `defer`, for drivers with their own tool search), `run_code` in code mode, and `structured_output` when needed.
+2. Run context providers and store any new context in the message, then build the system prompt: stable blocks first (instructions, skills index, toolkits, subagents) marked for caching, then dynamic blocks.
+3. Turn the active path into provider-neutral `ModelTurn`s: steps split, unanswered calls dropped, compaction applied, and old tool output trimmed unless the driver manages context. Earlier turns come out the same on every request: history is only appended to.
 4. Call `beforeModelCall` hooks, stream the step, and map driver events to `AgentEvent`s.
 5. For each tool call: validate, run `beforeToolCall` hooks, check permissions, then ask, wait, suspend or execute (in parallel up to `toolConcurrency`), and finally run `afterToolCall` hooks.
 6. Repeat until the model stops (`onStop` hooks can push it on), a limit is hit, or the run suspends for input.

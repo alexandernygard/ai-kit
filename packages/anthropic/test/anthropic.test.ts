@@ -1,6 +1,6 @@
 import { createKit, defineAgent, jsonSchema, tool, type ToolPart } from "@alexandernygard/ai-kit"
 import { describe, expect, it } from "vitest"
-import { claude } from "../src/index"
+import { claude, toAnthropicMessages } from "../src/index"
 
 type Event = Record<string, any>
 
@@ -74,7 +74,11 @@ describe("claude driver", () => {
     expect(first).toMatchObject({ model: "claude-opus-5-5", stream: true, max_tokens: 64000 })
     expect(first.system[0]).toMatchObject({ type: "text", text: "Be brief.", cache_control: { type: "ephemeral" } })
     expect(first.tools[0]).toMatchObject({ name: "get_weather", eager_input_streaming: true, input_schema: { type: "object" } })
-    expect(first.thinking).toBeUndefined()
+    // ai-kit keeps history append-only; drop_block is the safety net if something edits it anyway.
+    expect(first.thinking).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } })
+    expect(first.context_management).toEqual({ edits: [{ type: "compact_20260112", trigger: { type: "input_tokens", value: 800_000 } }] })
+    expect(first.betas).toEqual(["thinking-binding-controls-2026-08-01", "compact-2026-01-12"])
+    expect(first.fallbacks).toBeUndefined()
 
     const [, assistant, results] = calls[1].messages
     expect(assistant).toEqual({
@@ -161,7 +165,7 @@ describe("claude driver", () => {
       agents: [
         defineAgent({
           name: "a",
-          model: claude("claude-sonnet-5-5", { client, cache: false, fallbacks: "default" }),
+          model: claude("claude-sonnet-5-5", { client, cache: false, fallbacks: "default", compaction: false, thinkingBinding: false }),
           settings: { effort: "minimal", reasoningSummary: true, maxOutputTokens: 1000 },
           output: jsonSchema<{ answer: string }>({ type: "object", properties: { answer: { type: "string" } }, required: ["answer"] }),
         }),
@@ -178,5 +182,109 @@ describe("claude driver", () => {
       betas: ["server-side-fallback-2026-07-01"],
     })
     expect(JSON.stringify(calls[0])).not.toContain("cache_control")
+  })
+
+  it("stores a compaction block and sends it back in place", async () => {
+    const compaction = { type: "compaction", content: null, encrypted_content: null }
+    const { client, calls } = mockClient([
+      [
+        { ...start(), message: { usage: { input_tokens: 10, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: compaction },
+        { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: "Summary.", encrypted_content: "enc" } },
+        { type: "content_block_stop", index: 0 },
+        ...text(1, "Carrying on."),
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5, iterations: [{ type: "compaction", input_tokens: 1000, output_tokens: 100 }, { type: "message", input_tokens: 10, output_tokens: 5 }] } },
+        { type: "message_stop" },
+      ],
+      [start(), ...text(0, "Next."), ...stop("end_turn")],
+    ])
+    const kit = createKit({ agents: [defineAgent({ name: "a", model: claude("claude-opus-5-5", { client }) })] })
+    const session = await kit.createSession()
+    const run = session.send("Long task")
+    const events: any[] = []
+    for await (const e of run) events.push(e)
+    const r = await run.result
+    expect(events.find((e) => e.type === "status" && e.status === "compacted")).toBeTruthy()
+    expect(r.text).toBe("Carrying on.")
+    expect(r.usage).toMatchObject({ inputTokens: 1010, outputTokens: 105 })
+
+    await session.send("More").result
+    expect(calls[1].messages[1].content).toEqual([
+      { type: "compaction", content: "Summary.", encrypted_content: "enc" },
+      { type: "text", text: "Carrying on." },
+    ])
+  })
+
+  it("declares deferred tools with defer_loading and adds the tool search tool", async () => {
+    const searchResult = { type: "tool_search_tool_result", tool_use_id: "s1", content: { type: "tool_search_tool_search_result", tool_references: [{ type: "tool_reference", tool_name: "get_weather" }] } }
+    const { client, calls } = mockClient([
+      [
+        start(),
+        ...block(0, { type: "server_tool_use", id: "s1", name: "tool_search_tool_bm25", input: {} }, { type: "input_json_delta", partial_json: '{"query":"weather"}' }),
+        { type: "content_block_start", index: 1, content_block: searchResult },
+        { type: "content_block_stop", index: 1 },
+        ...block(2, { type: "tool_use", id: "c1", name: "get_weather", input: {} }, { type: "input_json_delta", partial_json: '{"city":"Oslo"}' }),
+        ...stop("tool_use"),
+      ],
+      [start(), ...text(0, "4C."), ...stop("end_turn")],
+    ])
+    const deferred = tool({ ...weather, defer: true })
+    const ping = tool({ name: "ping", description: "Ping", execute: () => "pong" })
+    const kit = createKit({ agents: [defineAgent({ name: "a", model: claude("claude-opus-5-5", { client }), tools: [ping, deferred] })] })
+    const r = await (await kit.createSession()).send("Weather in Oslo?").result
+    expect(r.text).toBe("4C.")
+    for (const call of calls) {
+      expect(call.tools.map((t: any) => [t.name, t.defer_loading ?? false])).toEqual([
+        ["ping", false],
+        ["get_weather", true],
+        ["tool_search_tool_bm25", false],
+      ])
+    }
+    expect(calls[1].messages[1].content.slice(0, 2)).toEqual([
+      { type: "server_tool_use", id: "s1", name: "tool_search_tool_bm25", input: { query: "weather" } },
+      searchResult,
+    ])
+  })
+
+  it("sends system turns as system messages where the model supports them", () => {
+    const turns = [
+      { role: "user" as const, content: [{ type: "text" as const, text: "hi" }] },
+      { role: "system" as const, content: [{ type: "text" as const, text: "Use the ping tool." }] },
+    ]
+    expect(toAnthropicMessages(turns)).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "system", content: [{ type: "text", text: "Use the ping tool." }] },
+    ])
+    expect(toAnthropicMessages(turns, undefined, { systemMessages: false })).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }, { type: "text", text: "<system>\nUse the ping tool.\n</system>" }] },
+    ])
+    expect(claude("claude-opus-5-5").capabilities).toMatchObject({ forcedToolChoice: false, contextManagement: true, toolSearch: true })
+    expect(claude("claude-opus-4-8").capabilities).toMatchObject({ forcedToolChoice: true })
+  })
+
+  it("leaves out what the declining model produced before a fallback boundary", () => {
+    const fallback = { type: "fallback", from: { model: "claude-opus-5-5" }, to: { model: "claude-opus-5" }, trigger: { type: "refusal" } }
+    const messages = toAnthropicMessages([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "hmm", providerMetadata: { anthropic: { signature: "s" } } },
+          { type: "text", text: "Partial. " },
+          { type: "tool-call", toolCallId: "c1", toolName: "get_weather", input: {} },
+          { type: "raw", provider: "anthropic", value: fallback },
+          { type: "tool-call", toolCallId: "c2", toolName: "get_weather", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "c1", toolName: "get_weather", output: { type: "text", value: "a" } },
+          { type: "tool-result", toolCallId: "c2", toolName: "get_weather", output: { type: "text", value: "b" } },
+        ],
+      },
+    ])
+    expect(messages[1]!.content).toEqual([{ type: "text", text: "Partial. " }, fallback, { type: "tool_use", id: "c2", name: "get_weather", input: {} }])
+    expect(messages[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "c2", content: "b" }])
   })
 })

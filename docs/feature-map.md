@@ -34,8 +34,8 @@ How ai-kit lines up with what Claude, Claude Code and the Claude API offer, and 
 | Slash commands | `defineCommand` |
 | Plugins | `definePlugin` |
 | Todo list | `todo_write`, `todosOf` |
-| Compaction | tool-output clearing, then summaries |
-| Tool search | `defer` + `search_tools`, pluggable index |
+| Compaction | server-side compaction with `claude()`; otherwise tool-output clearing, then summaries |
+| Tool search | `defer` + `search_tools`, pluggable index; Claude's server-side tool search with `claude()` |
 | Code execution with tools ("code mode") | `codeMode` + `workerSandbox` |
 | Structured output | `output` schemas |
 | Budgets | `maxSteps`, `maxCostUsd`, `maxTokens`, `timeoutMs` |

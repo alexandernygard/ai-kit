@@ -22,11 +22,12 @@ The model sees each one as `<context name="user">...</context>`. A provider retu
 
 | Option | Values | Default |
 | --- | --- | --- |
-| `placement` | `turn`: in front of the newest user message. `system`: a system block. | `turn`, so the system prompt stays the same and prompt caching keeps working |
+| `placement` | `turn`: user-side text, for facts about the user or their screen. `system`: a system message, with operator authority. | `turn` |
 | `refresh` | `run`: computed once per run. `step`: before every model call. | `run` (`currentTime` uses `step`) |
 
 - Providers come from the kit, plugins (`contextProviders`, or `api.addContext()` in `setup`) and the agent. They run in that order, and the same name overrides an earlier one.
 - A provider that throws is skipped, and a `status` event reports `context-error`.
+- Context is stored in the run's message at the point the model sees it (an `ai-kit.context` data part, hidden from UIs) and is only added again when its text changes. The system prompt never carries context, and earlier turns go out the same on every request, so the prompt cache stays warm and Claude's thinking stays valid. Drivers without mid-conversation system messages get `system` context as user text.
 
 ### Context from the browser
 
@@ -74,6 +75,8 @@ const refund = tool({ name: "issue_refund", description: "...", keywords: ["mone
 The system prompt lists deferred toolkits by name and description. `search_tools({ query })` scores tools by name, keywords and description and loads the best matches. `{ toolkit: "github" }` loads a toolkit, and `{ names: [...] }` loads tools by name. Loaded tools stay loaded for the session (`state["ai-kit.activeTools"]`).
 
 Swap the keyword search for embeddings with `toolSearch: { index: myIndex }`, where `ToolIndex.search(query, entries, limit)` returns hits. MCP toolkits are deferred by default.
+
+Drivers that search tools themselves (`capabilities.toolSearch`, which `claude()` has) get every tool from the first step, with deferred ones marked `defer: true`, and no `search_tools`. The model loads deferred tools with the provider's search, so the tool list never changes mid-conversation. Skill tools are declared the same way.
 
 ## Code mode
 
@@ -131,16 +134,18 @@ The system prompt lists each skill's name and description. `load_skill` returns 
 
 ## Compaction
 
-Two layers, cheapest first:
+Drivers that manage context on the provider's side (`capabilities.contextManagement`, which `claude()` has) do both of these themselves: ai-kit leaves the history alone and passes `threshold` × the window and `prompt` to the driver. `claude()` uses the API's server-side compaction; see [drivers](drivers.md).
 
-1. **Clearing tool output** (always on). Tool outputs over 4 000 characters in all but the last 3 assistant messages are replaced with a short note. Tune with `compaction: { clearToolResults: { keepRecent, minChars } }`.
+Otherwise, two layers, cheapest first:
+
+1. **Clearing tool output** (on by default). Tool outputs over 4 000 characters in all but the last 3 assistant messages are replaced with a short note. Tune with `compaction: { clearToolResults: { keepRecent, minChars } }`.
 2. **Summarising.** When the request reaches `threshold` (0.8) of `contextWindow`, older messages are summarised. The last `keepRecent` (6) stay word for word. The summary is stored in session state and stands in for those messages on every later call, while the UI keeps the full history.
 
 ```ts
 compaction: { contextWindow: 200_000, threshold: 0.8, keepRecent: 6, model: claude("claude-haiku-5-5") }
 ```
 
-`beforeCompact` hooks can veto it, and `session.compact()` runs it on demand.
+`beforeCompact` hooks can veto it, and `session.compact()` runs it on demand. Reasoning in the turns kept after a summary isn't sent again: its signatures cover the full history, which the model no longer sees.
 
 ## Memory across sessions
 

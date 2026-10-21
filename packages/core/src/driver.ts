@@ -33,6 +33,18 @@ export interface ModelCapabilities {
   /** Native JSON-schema output. Without it ai-kit uses a structured-output tool. */
   structuredOutput?: boolean
   promptCaching?: boolean
+  /**
+   * The provider compacts and trims the context itself (Claude's server-side compaction).
+   * ai-kit then leaves the history alone instead of summarizing or clearing tool outputs.
+   */
+  contextManagement?: boolean
+  /** The provider searches deferred tools itself. ai-kit sends them with `defer: true` and adds no `search_tools`. */
+  toolSearch?: boolean
+  /**
+   * `false` when the model rejects a forced `toolChoice` ("required" or a named tool). ai-kit then
+   * sends "auto" and tells the model which tool to use in a system message.
+   */
+  forcedToolChoice?: boolean
 }
 
 export interface SystemBlock {
@@ -47,6 +59,8 @@ export interface ToolSpec {
   inputSchema: JSONSchema
   /** Provider-defined tool settings, passed through as-is (`{ type: "web_search_20260209" }`). */
   provider?: Record<string, unknown>
+  /** Loaded only when the model finds it with the provider's tool search (needs `capabilities.toolSearch`). */
+  defer?: boolean
 }
 
 export type ToolChoice = "auto" | "none" | "required" | { tool: string }
@@ -73,16 +87,27 @@ export interface ModelRequest {
   /** Ask for JSON matching this schema (only when the driver has `structuredOutput`). */
   responseFormat?: { schema: JSONSchema; name?: string }
   settings: ModelSettings
+  /**
+   * For drivers with `capabilities.contextManagement`: when to compact (input tokens) and with
+   * which instructions. `false` turns it off.
+   */
+  contextManagement?: false | { compactAtTokens?: number; instructions?: string }
   signal: AbortSignal
 }
 
-/** Provider-neutral conversation turns. Drivers translate these to their API's messages. */
+/**
+ * Provider-neutral conversation turns. Drivers translate these to their API's messages.
+ * ai-kit only ever appends to them: earlier turns go out byte for byte the same on every request,
+ * which keeps the prompt cache warm and Claude's thinking valid.
+ */
 export type ModelTurn =
+  /** Operator text in the middle of the conversation (context, instructions). Drivers without system messages send it as user text. */
+  | { role: "system"; content: ModelTextContent[] }
   | { role: "user"; content: Array<ModelTextContent | ModelFileContent> }
   | {
       role: "assistant"
       /** Tool results appear here only for provider-executed tools. */
-      content: Array<ModelTextContent | ModelReasoningContent | ModelToolCallContent | ModelToolResultContent>
+      content: Array<ModelTextContent | ModelReasoningContent | ModelToolCallContent | ModelToolResultContent | ModelRawContent>
     }
   | { role: "tool"; content: ModelToolResultContent[] }
 
@@ -111,6 +136,12 @@ export interface ModelToolCallContent {
   input: unknown
   providerExecuted?: boolean
   providerMetadata?: Record<string, unknown>
+}
+/** A provider block ai-kit doesn't model (a compaction summary, a fallback boundary). Sent back in place. */
+export interface ModelRawContent {
+  type: "raw"
+  provider: string
+  value: unknown
 }
 export interface ModelToolResultContent {
   type: "tool-result"
@@ -146,6 +177,11 @@ export type ModelEvent =
     }
   | { type: "tool-result"; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown> }
   | { type: "source"; url: string; title?: string }
+  /**
+   * A provider block to keep in the message and send back in place next time. `compaction` is set
+   * when the provider compacted the conversation, with the summary.
+   */
+  | { type: "raw"; provider: string; value: unknown; compaction?: { summary: string } }
   | { type: "file"; mediaType: string; data: string }
   | { type: "finish"; finishReason: ModelFinishReason; usage: Usage; providerMetadata?: Record<string, unknown> }
   | { type: "error"; error: unknown }

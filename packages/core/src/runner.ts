@@ -1,7 +1,18 @@
 import type { Agent, Limits } from "./agent"
 import { askUserTool, STRUCTURED_OUTPUT_TOOL, structuredOutputTool, todoTool } from "./builtin-tools"
 import { type CodeModeOptions, runCodeTool } from "./code-mode"
-import { COMPACTION_KEY, type CompactionState, estimateRequestTokens, estimateTokens, NUDGE_PART, summarize, toModelTurns } from "./context"
+import {
+  COMPACTION_KEY,
+  type CompactionState,
+  CONTEXT_PART,
+  type ContextPartData,
+  estimateRequestTokens,
+  estimateTokens,
+  NUDGE_PART,
+  RAW_PART,
+  summarize,
+  toModelTurns,
+} from "./context"
 import { ACTIVE_TOOLS_KEY, type DisclosureOptions, searchToolsTool, toolkitsPrompt, type ToolIndexEntry } from "./disclosure"
 import {
   type Driver,
@@ -15,7 +26,7 @@ import {
 import type { AgentEvent, FinishReason } from "./events"
 import type { HookContext, HookRunner, ToolCallInfo, ToolDecision } from "./hooks"
 import { createId, now } from "./id"
-import type { Message, ToolPart, ToolRuntime } from "./messages"
+import type { DataPart, Message, ToolPart, ToolRuntime } from "./messages"
 import { checkPermission, type PermissionMode, type Permissions, ruleMatches } from "./permissions"
 import { reduceMessage } from "./reducer"
 import type { Run, ToolResponse } from "./run"
@@ -338,6 +349,9 @@ class RunContext {
     const deferredEntries: ToolIndexEntry[] = []
     const visible: Tool[] = []
 
+    // With the provider's tool search, every tool is declared from the first step and deferred ones
+    // load when the model finds them, so the tool list never changes mid-conversation.
+    const nativeSearch = this.nativeToolSearch(driver)
     const add = (t: Tool, kit?: Toolkit) => {
       all.push(t)
       const deferred = t.defer || kit?.defer
@@ -347,10 +361,14 @@ class RunContext {
     r.tools.forEach((t) => add(t))
     r.toolkits.forEach((k) => k.tools.forEach((t) => add(t, k)))
     for (const s of r.skills) {
-      if (!loadedSkills.has(s.name)) continue
+      if (!loadedSkills.has(s.name) && !nativeSearch) continue
       for (const t of s.tools ?? []) {
-        if (t.kind === "toolkit") t.tools.forEach((x) => (all.push(x), visible.push(x)))
-        else (all.push(t), visible.push(t))
+        const tools = t.kind === "toolkit" ? t.tools : [t]
+        for (const x of tools) {
+          all.push(x)
+          if (nativeSearch) deferredEntries.push({ tool: x })
+          else visible.push(x)
+        }
       }
     }
 
@@ -378,11 +396,14 @@ class RunContext {
       const runCode = runCodeTool(codeVisible, codeHidden, (name, input, c) => this.callNested(name, input, c.toolCallId), opts)
       modelTools = [runCode, ...direct, ...builtins]
       const directDeferred = deferredEntries.filter((e) => !eligible(e.tool))
-      if (directDeferred.length && this.agent.toolSearch !== false) modelTools.push(this.searchTool(directDeferred, r.toolkits, active))
+      if (nativeSearch) directDeferred.forEach((e) => modelTools.push(e.tool))
+      else if (directDeferred.length && this.agent.toolSearch !== false) modelTools.push(this.searchTool(directDeferred, r.toolkits, active))
     } else {
       modelTools = [...visible, ...builtins]
-      if (deferredEntries.length && this.agent.toolSearch !== false) modelTools.push(this.searchTool(deferredEntries, r.toolkits, active))
+      if (nativeSearch) deferredEntries.forEach((e) => modelTools.push(e.tool))
+      else if (deferredEntries.length && this.agent.toolSearch !== false) modelTools.push(this.searchTool(deferredEntries, r.toolkits, active))
     }
+    this.deferredNames = nativeSearch ? new Set(deferredEntries.map((e) => e.tool.name)) : new Set()
 
     // Provider JSON mode only works without tools; otherwise answer through a tool.
     this.nativeOutputNow = !!this.outputSchema && this.nativeOutput(driver) && modelTools.length === 0
@@ -406,11 +427,22 @@ class RunContext {
     )
   }
 
+  /** Tools to send with `defer: true`, for drivers that search tools themselves. */
+  private deferredNames = new Set<string>()
+
+  private nativeToolSearch(driver: Driver) {
+    return driver.capabilities?.toolSearch === true && this.agent.toolSearch !== false
+  }
+
   private nativeOutput(driver: Driver) {
     return driver.capabilities?.structuredOutput === true
   }
 
-  private async systemPrompt(hasDeferred: boolean, loadedSkills: Set<string>, contexts: ResolvedContext[] = []): Promise<SystemBlock[]> {
+  /**
+   * The top-level system prompt. It stays the same for the whole session wherever it can: context
+   * goes into the conversation as messages instead, so the prompt cache and Claude's thinking stay valid.
+   */
+  private async systemPrompt(hasDeferred: boolean, loadedSkills: Set<string>, driver: Driver): Promise<SystemBlock[]> {
     const ictx = {
       agent: this.agent.name,
       sessionId: this.input.session.id,
@@ -435,13 +467,12 @@ class RunContext {
     const dynamic: string[] = []
     const active = new Set((this.state[ACTIVE_TOOLS_KEY] as string[] | undefined) ?? [])
     for (const k of this.resolved.toolkits) {
-      if (k.instructions && (!k.defer || k.tools.some((t) => active.has(t.name)))) dynamic.push(`# ${k.name}\n${k.instructions}`)
+      if (k.instructions && (!k.defer || this.nativeToolSearch(driver) || k.tools.some((t) => active.has(t.name)))) dynamic.push(`# ${k.name}\n${k.instructions}`)
     }
     if (this.outputSchema && !this.nativeOutputNow) {
       dynamic.push(`When you're done, call \`${STRUCTURED_OUTPUT_TOOL}\` with your final answer.`)
     }
     void loadedSkills
-    for (const c of contexts) if (c.placement === "system") dynamic.push(c.text)
     const blocks: SystemBlock[] = []
     const s = stable.filter(Boolean).join("\n\n")
     if (s) blocks.push({ text: s, cache: true })
@@ -473,21 +504,20 @@ class RunContext {
 
       const { modelTools, hasDeferred, loadedSkills } = this.assembleTools(driver)
       const contexts = await this.resolveContext(this.step)
-      const system = await this.systemPrompt(hasDeferred, loadedSkills, contexts)
-      let turns = this.turns(contexts)
+      this.storeContext(contexts)
+      const system = await this.systemPrompt(hasDeferred, loadedSkills, driver)
+      const toolChoice = this.toolChoice(driver)
       let request: ModelRequest = {
         system,
-        messages: turns,
-        tools: modelTools.map(toToolSpec),
-        toolChoice: this.step === 0 && !this.input.continueMessage ? this.input.options.toolChoice : undefined,
+        messages: this.turns(driver),
+        tools: modelTools.map((t) => (this.deferredNames.has(t.name) ? { ...toToolSpec(t), defer: true } : toToolSpec(t))),
+        toolChoice,
         responseFormat: this.outputSchema && this.nativeOutputNow ? { schema: this.outputSchema } : undefined,
         settings: { ...this.agent.settings, ...this.input.options.settings },
+        contextManagement: this.contextManagement(driver),
         signal: this.signal,
       }
-      if (await this.maybeCompact(driver, request)) {
-        turns = this.turns(contexts)
-        request = { ...request, messages: turns }
-      }
+      if (await this.maybeCompact(driver, request)) request = { ...request, messages: this.turns(driver) }
       request = await this.resolved.hooks.beforeModelCall(request, { ...this.hookCtx, step: this.step })
 
       const stepIndex = this.step++
@@ -537,23 +567,62 @@ class RunContext {
     }
   }
 
-  private turns(contexts: ResolvedContext[] = []) {
+  private turns(driver: Driver) {
     const path = [...this.input.history, ...(this.input.userMessage ? [this.input.userMessage] : []), this.message]
-    const turns = toModelTurns(path, {
+    // Clearing old tool outputs edits history; drivers that manage context do it on the provider's side.
+    const managed = driver.capabilities?.contextManagement === true
+    return toModelTurns(path, {
       compaction: this.state[COMPACTION_KEY] as CompactionState | undefined,
-      clearToolResults: this.agent.compaction === false ? false : this.agent.compaction?.clearToolResults,
+      clearToolResults: this.agent.compaction === false || managed ? false : this.agent.compaction?.clearToolResults,
       toModelOutput: (name, output) => toModelOutput(this.tools.get(name), output),
     })
-    // Turn context goes in front of the newest user message, so earlier turns (and the cache) stay put.
-    const inTurn = contexts.filter((c) => c.placement === "turn")
-    if (inTurn.length) {
-      const i = turns.findLastIndex((t) => t.role === "user")
-      const target = turns[i]
-      if (target?.role === "user") {
-        turns[i] = { role: "user", content: [...inTurn.map((c) => ({ type: "text" as const, text: c.text })), ...target.content] }
+  }
+
+  /**
+   * Store context in the message at the point the model sees it, so the next request sends the
+   * same history. A provider's text is only stored again when it changed. `system` placement
+   * becomes a system message; `turn` placement stays user-side text.
+   */
+  private storeContext(contexts: ResolvedContext[]) {
+    if (!contexts.length) return
+    const last = new Map<string, string>()
+    for (const m of [...this.input.history, ...(this.input.userMessage ? [this.input.userMessage] : []), this.message]) {
+      for (const p of m.parts) {
+        if (p.type === "data" && p.name === CONTEXT_PART) {
+          const c = p.data as ContextPartData
+          last.set(c.name, c.text)
+        }
       }
     }
-    return turns
+    for (const c of contexts) {
+      if (last.get(c.name) === c.text) continue
+      this.addContext({ name: c.name, role: c.placement === "system" ? "system" : "user", text: c.text })
+    }
+  }
+
+  private addContext(data: ContextPartData) {
+    const part: DataPart<ContextPartData> = { type: "data", id: createId("ctx", 8), name: CONTEXT_PART, data }
+    this.emit({ type: "data", part })
+  }
+
+  /**
+   * The step's tool choice. Models that reject forced choices get "auto" and a system message
+   * naming the tool, stored like other context.
+   */
+  private toolChoice(driver: Driver): ToolChoice | undefined {
+    const choice = this.step === 0 && !this.input.continueMessage ? this.input.options.toolChoice : undefined
+    if (!choice || choice === "auto" || choice === "none" || driver.capabilities?.forcedToolChoice !== false) return choice
+    const text = choice === "required" ? "Use one of your tools for this request." : `Use the \`${choice.tool}\` tool for this request.`
+    this.addContext({ name: "tool_choice", role: "system", text })
+    return "auto"
+  }
+
+  /** Compaction settings for drivers that compact on the provider's side. */
+  private contextManagement(driver: Driver): ModelRequest["contextManagement"] {
+    if (driver.capabilities?.contextManagement !== true) return undefined
+    const opts = this.agent.compaction
+    if (opts === false) return false
+    return { compactAtTokens: Math.floor(this.contextWindow() * (opts?.threshold ?? 0.8)), instructions: opts?.prompt }
   }
 
   // ----------------------------------------------------------------------------------------
@@ -750,6 +819,10 @@ class RunContext {
         case "source":
           this.emit({ type: "source", part: { type: "source", id: createId("src", 8), url: e.url, title: e.title } })
           break
+        case "raw":
+          this.emit({ type: "data", part: { type: "data", id: createId("raw", 8), name: RAW_PART, data: { provider: e.provider, value: e.value } } })
+          if (e.compaction) this.emit({ type: "status", status: "compacted", detail: "The provider summarized the earlier conversation." })
+          break
         case "file":
           this.emit({ type: "file", part: { type: "file", id: createId("file", 8), mediaType: e.mediaType, data: e.data } })
           break
@@ -776,7 +849,7 @@ class RunContext {
 
   private async maybeCompact(driver: ModelDriver, request: ModelRequest): Promise<boolean> {
     const opts = this.agent.compaction
-    if (opts === false) return false
+    if (opts === false || driver.capabilities?.contextManagement === true) return false
     const windowSize = this.contextWindow()
     const threshold = opts?.threshold ?? 0.8
     const tokens = estimateRequestTokens(request)
@@ -790,7 +863,8 @@ class RunContext {
     if (!(await this.resolved.hooks.beforeCompact({ messages: candidates, tokens }, this.hookCtx))) return false
     this.emit({ type: "status", status: "compacting", detail: `About ${tokens} tokens` })
     const summary = await summarize(opts?.model ?? driver, candidates, { prompt: opts?.prompt, signal: this.signal, previous: prev?.summary })
-    const state: CompactionState = { uptoMessageId: candidates.at(-1)!.id, summary }
+    // The kept turns' reasoning was signed against the full history, so it can't be sent after the summary.
+    const state: CompactionState = { uptoMessageId: candidates.at(-1)!.id, summary, reasoningBefore: { messageId: this.message.id, parts: this.message.parts.length } }
     this.stateAccess().set(COMPACTION_KEY, state)
     this.emit({ type: "compaction", summary, uptoMessageId: state.uptoMessageId })
     return true

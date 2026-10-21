@@ -22,7 +22,10 @@ claude("claude-opus-5-5", {
   maxTokens: 64_000,      // max_tokens when the agent sets no maxOutputTokens
   cache: { ttl: "1h" },   // prompt-cache breakpoints; default on with the 5-minute TTL
   thinking: { type: "adaptive", display: "summarized" },
-  fallbacks: "default",   // server-side fallback on refusals (off by default, see below)
+  fallbacks: "default",   // server-side fallback on refusals; default on Claude 5 models with the default client
+  compaction: { instructions: "Keep file paths." }, // server-side compaction; default on where supported
+  clearToolUses: true,    // server-side clearing of old tool results; off by default
+  toolSearch: "bm25",     // server-side tool search for deferred tools; or "regex", or false
   params: { inference_geo: "us" }, // merged into every request
 })
 ```
@@ -36,8 +39,12 @@ claude("claude-opus-5-5", {
   tool({ name: "web_search", description: "Search the web", provider: { type: "web_search_20260209", max_uses: 5 } })
   ```
 - **Structured output.** Uses `output_config.format` when the agent has no tools; otherwise the `structured_output` tool.
-- **Refusals.** `stop_reason: "refusal"` ends the step with finish reason `content-filter`. `fallbacks: "default"` lets the API retry on another model. It's off by default because a fallback in the middle of a reply leaves a boundary block that has to be sent back in place, and ai-kit's message format doesn't keep it yet.
-- **Forced tool choice.** `toolChoice: "required"` or `{ tool }` returns a 400 on Claude Opus 5.5, Sonnet 5.5 and Fable 5.1. Use `"auto"` and say which tool to use in the prompt.
+- **Append-only history.** Claude's thinking is only valid in the conversation that produced it: the system prompt, the tools and every earlier message must come back unchanged. ai-kit keeps them so. Context goes into the conversation as messages instead of the system prompt, deferred tools are declared from the start, and compaction and tool-result clearing happen on the server. As a safety net, models with preserved thinking get `thinking.block_binding.prefix_mismatch_behavior: "drop_block"`, so stale reasoning is dropped instead of failing the request; set `thinkingBinding: "error"` in tests to catch edits, or `false` to leave it unset.
+- **Compaction.** On by default where the model supports it. When the prompt reaches the agent's `compaction.threshold` of the context window (at least 50 000 tokens), the API summarizes the earlier conversation. The compaction block is stored in the message and sent back, a `status` event reports `compacted`, and its tokens are counted in usage. `compaction.prompt` becomes the summarization instructions. `compaction: false` on the agent or the driver turns it off; with the driver option off, ai-kit summarizes on its own.
+- **Tool search.** Deferred tools (`defer: true`) are sent with `defer_loading: true` next to the `tool_search_tool_bm25` server tool, which loads them as the model needs them. Keep the tools used on most turns undeferred.
+- **System messages.** Context with `placement: "system"` and ai-kit's own instructions go as mid-conversation `role: "system"` messages on the models that support them, and as user text elsewhere (`systemMessages` overrides the choice).
+- **Refusals.** `stop_reason: "refusal"` ends the step with finish reason `content-filter`. With `fallbacks: "default"` the API retries on another model instead. A fallback in the middle of a reply leaves a `fallback` boundary block, which is stored and sent back in place; the declining model's thinking and tool calls before it are left out, along with their results. Bedrock, Vertex and Foundry clients don't support server-side fallbacks, so pass `fallbacks` explicitly only on the Claude API.
+- **Forced tool choice.** Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 reject `toolChoice: "required"` or `{ tool }`. On those models ai-kit sends `"auto"` and a system message naming the tool.
 - **Overrides.** `settings.providerOptions.anthropic` is merged into the request body last, and `settings.headers` go on each request.
 
 ## AI SDK (`aiSdk`)

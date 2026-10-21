@@ -8,7 +8,9 @@ import {
   defineContext,
   definePlugin,
   tool,
+  toModelTurns,
   type AgentEvent,
+  type Message,
   type ModelTurn,
 } from "../src/index"
 import { collect, mockModel } from "../src/testing"
@@ -16,7 +18,7 @@ import { collect, mockModel } from "../src/testing"
 const textOfTurn = (t: ModelTurn | undefined) => JSON.stringify(t?.content ?? [])
 
 describe("context providers", () => {
-  it("attaches turn context to the newest user message and system context to the system prompt", async () => {
+  it("stores context in the conversation: turn context as user text, system context as a system message", async () => {
     const model = mockModel([{ text: "ok" }, { text: "ok again" }])
     const kit = createKit({
       agents: [
@@ -35,15 +37,45 @@ describe("context providers", () => {
     await s.send("first", { context: { name: "Ada" } }).result
     await s.send("second", { context: { name: "Ada" } }).result
 
-    const req = model.requests[1]!
-    expect(req.system[0]!.text).toBe("Be brief.")
-    expect(req.system.at(-1)!.text).toContain('<context name="rules">\nPrices in NOK.')
-    const users = req.messages.filter((t) => t.role === "user")
-    // Only the newest user turn carries the turn context; the earlier one is left as it was.
-    expect(textOfTurn(users[0])).not.toContain("context name")
-    expect(textOfTurn(users[1])).toContain('<context name=\\"user\\">')
-    expect(textOfTurn(users[1])).toContain("Ada")
-    expect(textOfTurn(users[1])).toContain("second")
+    const [first, second] = model.requests
+    // The system prompt never carries context, so it stays the same.
+    expect(second!.system).toEqual([{ text: "Be brief.", cache: true }])
+    expect(first!.messages.map((t) => t.role)).toEqual(["user", "system"])
+    expect(textOfTurn(first!.messages[0])).toContain('<context name=\\"user\\">')
+    expect(textOfTurn(first!.messages[1])).toContain('<context name=\\"rules\\">\\nPrices in NOK.')
+    // The second request repeats the first word for word and adds to it. Unchanged context isn't sent again.
+    expect(second!.messages.slice(0, 2)).toEqual(first!.messages)
+    expect(second!.messages.map((t) => t.role)).toEqual(["user", "system", "assistant", "user"])
+    expect(textOfTurn(second!.messages[3])).not.toContain("context name")
+  })
+
+  it("only ever appends to the history, across steps and runs", async () => {
+    let n = 0
+    const model = mockModel(
+      [{ toolCalls: [{ name: "big", input: {} }] }, { toolCalls: [{ name: "big", input: {} }] }, { text: "done" }],
+      { capabilities: { contextManagement: true } },
+    )
+    const kit = createKit({
+      agents: [
+        defineAgent({
+          name: "a",
+          model,
+          tools: [tool({ name: "big", description: "big", execute: () => "x".repeat(10_000) })],
+          contextProviders: [defineContext({ name: "tick", refresh: "step", get: () => `tick ${++n}` })],
+        }),
+      ],
+    })
+    const s = await kit.createSession()
+    await s.send("go").result
+    await s.send("again").result
+    const reqs = model.requests
+    for (let i = 1; i < reqs.length; i++) {
+      const prev = reqs[i - 1]!.messages
+      expect(reqs[i]!.messages.slice(0, prev.length)).toEqual(prev)
+    }
+    // Old tool outputs aren't cleared when the driver manages context.
+    expect(JSON.stringify(reqs.at(-1)!.messages)).not.toContain("Output removed")
+    expect(reqs.at(-1)!.contextManagement).toEqual({ compactAtTokens: 160_000 })
   })
 
   it("computes run-scoped providers once and step-scoped providers every step", async () => {
@@ -166,5 +198,55 @@ describe("context usage", () => {
     const kit = createKit({ agents: [defineAgent({ name: "a", model })], contextWindows: { "acme-": 64_000 } })
     const events = await collect((await kit.createSession()).send("hi"))
     expect(events.find((e) => e.type === "context-usage")).toMatchObject({ window: 64_000 })
+  })
+})
+
+describe("append-only requests", () => {
+  const lookup = tool({ name: "lookup", description: "Look up an order", defer: true, execute: () => "found" })
+
+  it("declares deferred tools up front when the driver searches tools itself", async () => {
+    const model = mockModel([{ toolCalls: [{ name: "lookup", input: {} }] }, { text: "done" }], { capabilities: { toolSearch: true } })
+    const kit = createKit({ agents: [defineAgent({ name: "a", model, tools: [lookup, tool({ name: "ping", description: "ping", execute: () => "pong" })] })] })
+    const r = await (await kit.createSession()).send("Find order 7").result
+    expect(r.text).toBe("done")
+    for (const req of model.requests) {
+      expect(req.tools.map((t) => [t.name, t.defer ?? false])).toEqual([
+        ["ping", false],
+        ["lookup", true],
+      ])
+    }
+  })
+
+  it("turns a forced tool choice into a system message for models that reject it", async () => {
+    const model = mockModel([{ text: "ok" }], { capabilities: { forcedToolChoice: false } })
+    const kit = createKit({ agents: [defineAgent({ name: "a", model, tools: [tool({ name: "ping", description: "ping", execute: () => "pong" })] })] })
+    await (await kit.createSession()).send("hi", { toolChoice: { tool: "ping" } }).result
+    const req = model.requests[0]!
+    expect(req.toolChoice).toBe("auto")
+    expect(req.messages.at(-1)).toEqual({ role: "system", content: [{ type: "text", text: "Use the `ping` tool for this request." }] })
+  })
+
+  it("leaves out reasoning signed before a client-side compaction", () => {
+    const user = (id: string, text: string): Message => ({ id, role: "user", parentId: null, createdAt: 0, parts: [{ type: "text", id: `${id}t`, text }] })
+    const assistant = (id: string, text: string): Message => ({
+      id,
+      role: "assistant",
+      parentId: null,
+      createdAt: 0,
+      status: "complete",
+      parts: [
+        { type: "reasoning", id: `${id}r`, text: `thinking ${id}`, providerMetadata: { anthropic: { signature: "s" } } },
+        { type: "text", id: `${id}t`, text },
+      ],
+    })
+    const path = [user("u1", "a"), assistant("a1", "b"), user("u2", "c"), assistant("a2", "d"), user("u3", "e"), assistant("a3", "f")]
+    const turns = toModelTurns(path, { compaction: { uptoMessageId: "a1", summary: "earlier", reasoningBefore: { messageId: "a3", parts: 1 } } })
+    const json = JSON.stringify(turns)
+    expect(json).toContain("earlier")
+    expect(json).not.toContain("thinking a1")
+    expect(json).not.toContain("thinking a2")
+    expect(json).not.toContain("thinking a3")
+    // Without a cutoff, reasoning is sent back.
+    expect(JSON.stringify(toModelTurns(path))).toContain("thinking a3")
   })
 })

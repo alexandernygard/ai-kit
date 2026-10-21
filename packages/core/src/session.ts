@@ -213,7 +213,11 @@ export class Session<Ctx = any> {
     if (!candidates.length) return null
     const summary = await summarize(model, candidates, { signal: options.signal ?? new AbortController().signal })
     this.rec = await this.kit.store.updateSession(this.id, {
-      state: { ...this.rec.state, [COMPACTION_KEY]: { uptoMessageId: candidates.at(-1)!.id, summary } },
+      // The kept turns' reasoning was signed against the full history, so it's left out from now on.
+      state: {
+        ...this.rec.state,
+        [COMPACTION_KEY]: { uptoMessageId: candidates.at(-1)!.id, summary, reasoningBefore: { messageId: path.at(-1)!.id, parts: path.at(-1)!.parts.length } },
+      },
     })
     return summary
   }

@@ -206,6 +206,9 @@ const isUrl = (s: string) => /^(https?|data):/i.test(s)
 export function toModelMessages(turns: ModelTurn[], cacheControl?: { type: "ephemeral"; ttl?: "5m" | "1h" }): ModelMessage[] {
   const out: ModelMessage[] = turns.map((t): ModelMessage => {
     switch (t.role) {
+      // AI SDK providers only take system messages at the start, so mid-conversation ones go as user text.
+      case "system":
+        return { role: "user", content: t.content.map((c) => ({ type: "text" as const, text: `<system>\n${c.text}\n</system>` })) }
       case "user":
         return {
           role: "user",
@@ -220,8 +223,10 @@ export function toModelMessages(turns: ModelTurn[], cacheControl?: { type: "ephe
       case "assistant":
         return {
           role: "assistant",
-          content: t.content.map((c) => {
+          content: t.content.flatMap((c) => {
             switch (c.type) {
+              case "raw":
+                return []
               case "text":
                 return { type: "text" as const, text: c.text }
               case "reasoning":

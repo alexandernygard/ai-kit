@@ -12,6 +12,9 @@ import type {
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk"
 import type {
   BetaCacheControlEphemeral,
+  BetaClearToolUses20250919Edit,
+  BetaCompact20260112Edit,
+  BetaContextManagementConfig,
   BetaToolResultBlockParam,
   BetaContentBlockParam,
   BetaFallbacksParam,
@@ -47,10 +50,38 @@ export interface ClaudeOptions {
   eagerInputStreaming?: boolean
   /**
    * Server-side fallback when the model declines for policy reasons: `"default"` or a model list.
-   * Off by default: a fallback that happens mid-output needs its boundary block echoed back,
-   * which ai-kit's message format doesn't keep yet, so only use it where declines are rare.
+   * Default `"default"` on Claude 5 models with the default client (the Claude API); `false` turns
+   * it off. Bedrock, Vertex and Foundry clients don't support it.
    */
-  fallbacks?: BetaFallbacksParam
+  fallbacks?: BetaFallbacksParam | false
+  /**
+   * Server-side compaction (`compact_20260112`): when the prompt reaches the trigger, the API
+   * summarizes the earlier conversation and returns a compaction block that ai-kit stores and sends
+   * back. The trigger defaults to the agent's `compaction.threshold` of the context window (at
+   * least 50 000 tokens). Default on for models that support it; `false` turns it off and ai-kit
+   * summarizes on its own instead.
+   */
+  compaction?: boolean | Omit<BetaCompact20260112Edit, "type">
+  /** Server-side clearing of old tool results (`clear_tool_uses_20250919`). Off by default. */
+  clearToolUses?: boolean | Omit<BetaClearToolUses20250919Edit, "type">
+  /**
+   * Server-side tool search for deferred tools (`defer: true` on a tool or toolkit). All tools are
+   * declared up front and the model loads deferred ones by searching, so the tool list never
+   * changes. Default `"bm25"`; `false` falls back to ai-kit's `search_tools`.
+   */
+  toolSearch?: "bm25" | "regex" | false
+  /**
+   * Mid-conversation `role: "system"` messages for context and ai-kit's instructions. Defaults to
+   * the models that support them; others get the text in the user turn.
+   */
+  systemMessages?: boolean
+  /**
+   * What the API does with a thinking block whose conversation changed since it was produced
+   * (`thinking.block_binding.prefix_mismatch_behavior`). ai-kit keeps history append-only, so this
+   * is a safety net: `"drop_block"` (default on models with preserved thinking) drops the stale
+   * reasoning instead of failing the request. `false` leaves it unset.
+   */
+  thinkingBinding?: "drop_block" | "error" | false
   /** Extra `anthropic-beta` flags sent on every request. */
   betas?: string[]
   /** Merged into every request body, after everything else. */
@@ -60,6 +91,18 @@ export interface ClaudeOptions {
 }
 
 const FALLBACK_BETA = { list: "server-side-fallback-2026-06-01", default: "server-side-fallback-2026-07-01" }
+const COMPACTION_BETA = "compact-2026-01-12"
+const CONTEXT_EDITING_BETA = "context-management-2025-06-27"
+const THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+// What each model supports, by id. Options override these.
+const supports = (model: string, re: RegExp) => re.test(model)
+const CLAUDE_5 = /claude-(opus|sonnet|haiku|fable|mythos)-5/
+const COMPACTION_MODELS = /claude-(fable-5|mythos-5|mythos-preview|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6|haiku-5-5)/
+const SYSTEM_MESSAGE_MODELS = /claude-(opus-5|opus-4-8|fable-5|mythos-5|sonnet-5-5)/
+const PRESERVED_THINKING_MODELS = /claude-(fable-5-1|mythos-5-1|opus-5-5|sonnet-5-5|haiku-5-5)/
+const NO_FORCED_TOOL_CHOICE = /claude-(opus-5-5|sonnet-5-5|fable-5-1)/
+const TOOL_SEARCH_MODELS = /claude-(fable-5|mythos-5|opus-5|sonnet-5|haiku-5-5|opus-4-[5-8]|sonnet-4-[56]|haiku-4-5)/
 
 /**
  * A ModelDriver for the Claude API through the official Anthropic SDK.
@@ -80,6 +123,11 @@ const FALLBACK_BETA = { list: "server-side-fallback-2026-06-01", default: "serve
 export function claude(model: string, options: ClaudeOptions = {}): ModelDriver {
   let client = options.client
   const cache = options.cache ?? true
+  const compaction = options.compaction ?? supports(model, COMPACTION_MODELS)
+  const toolSearch = options.toolSearch ?? (supports(model, TOOL_SEARCH_MODELS) ? "bm25" : false)
+  const systemMessages = options.systemMessages ?? supports(model, SYSTEM_MESSAGE_MODELS)
+  const binding = options.thinkingBinding ?? (supports(model, PRESERVED_THINKING_MODELS) ? "drop_block" : false)
+  const fallbacks = options.fallbacks ?? (!options.client && supports(model, CLAUDE_5) ? "default" : false)
   const cacheControl: BetaCacheControlEphemeral | undefined = cache
     ? { type: "ephemeral", ...(typeof cache === "object" && cache.ttl ? { ttl: cache.ttl } : {}) }
     : undefined
@@ -88,34 +136,53 @@ export function claude(model: string, options: ClaudeOptions = {}): ModelDriver 
     kind: "model",
     provider: "anthropic",
     modelId: model,
-    capabilities: { structuredOutput: true, promptCaching: true, images: true, pdf: true, reasoning: true, ...options.capabilities },
+    capabilities: {
+      structuredOutput: true,
+      promptCaching: true,
+      images: true,
+      pdf: true,
+      reasoning: true,
+      contextManagement: compaction !== false,
+      toolSearch: toolSearch !== false,
+      forcedToolChoice: !supports(model, NO_FORCED_TOOL_CHOICE),
+      ...options.capabilities,
+    },
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
       client ??= new Anthropic(options.clientOptions)
       const s = request.settings
-      const thinking: BetaThinkingConfigParam | undefined = s.reasoningSummary
+      let thinking: BetaThinkingConfigParam | undefined = s.reasoningSummary
         ? { type: "adaptive", ...(options.thinking?.type === "adaptive" ? options.thinking : {}), display: "summarized" }
         : options.thinking
+      if (binding && (!thinking || thinking.type === "adaptive")) {
+        thinking = { type: "adaptive", ...thinking, block_binding: { prefix_mismatch_behavior: binding } } as BetaThinkingConfigParam
+      }
       const outputConfig: MessageCreateParamsStreaming["output_config"] = {
         ...(s.effort ? { effort: (s.effort === "minimal" ? "low" : s.effort) as Effort } : {}),
         ...(request.responseFormat && !request.tools.length ? { format: { type: "json_schema" as const, schema: request.responseFormat.schema as Record<string, unknown> } } : {}),
       }
       const betas = [...(options.betas ?? [])]
-      if (options.fallbacks) betas.push(options.fallbacks === "default" ? FALLBACK_BETA.default : FALLBACK_BETA.list)
+      if (fallbacks) betas.push(fallbacks === "default" ? FALLBACK_BETA.default : FALLBACK_BETA.list)
+      if (binding && thinking) betas.push(THINKING_BINDING_BETA)
+      const contextManagement = toContextManagement(request, compaction, options.clearToolUses)
+      if (contextManagement?.edits?.some((e) => e.type === "compact_20260112")) betas.push(COMPACTION_BETA)
+      if (contextManagement?.edits?.some((e) => e.type !== "compact_20260112")) betas.push(CONTEXT_EDITING_BETA)
 
-      const messages = toAnthropicMessages(request.messages, cacheControl)
+      const tools = toTools(request.tools, options.eagerInputStreaming ?? true, toolSearch)
+      const messages = toAnthropicMessages(request.messages, cacheControl, { systemMessages })
       const params: MessageCreateParamsStreaming = {
         model,
         max_tokens: s.maxOutputTokens ?? options.maxTokens ?? 64_000,
         system: request.system.map((b) => ({ type: "text" as const, text: b.text, ...(b.cache && cacheControl ? { cache_control: cacheControl } : {}) })),
         messages,
-        ...(request.tools.length ? { tools: request.tools.map((t) => toTool(t, options.eagerInputStreaming ?? true)) } : {}),
+        ...(tools.length ? { tools } : {}),
         ...(request.toolChoice !== undefined ? { tool_choice: toToolChoice(request.toolChoice) } : {}),
         ...(thinking ? { thinking } : {}),
         ...(Object.keys(outputConfig).length ? { output_config: outputConfig } : {}),
         ...(s.temperature !== undefined ? { temperature: s.temperature } : {}),
         ...(s.topP !== undefined ? { top_p: s.topP } : {}),
         ...(s.stopSequences?.length ? { stop_sequences: s.stopSequences } : {}),
-        ...(options.fallbacks ? { fallbacks: options.fallbacks } : {}),
+        ...(fallbacks ? { fallbacks } : {}),
+        ...(contextManagement ? { context_management: contextManagement } : {}),
         ...(betas.length ? { betas } : {}),
         ...options.params,
         ...(s.providerOptions?.anthropic as Partial<MessageCreateParamsStreaming> | undefined),
@@ -129,8 +196,10 @@ export function claude(model: string, options: ClaudeOptions = {}): ModelDriver 
           const turn = yield* streamRound(client, params, request, round, usage)
           if (!turn) return
           finishReason = turn.finishReason
-          // A long server-tool turn pauses; send the partial turn back and the model carries on.
-          if (turn.stopReason !== "pause_turn" || round >= (options.maxPauseResumes ?? 5)) break
+          // A long server-tool turn pauses (as does compaction with `pause_after_compaction`); send
+          // the partial turn back and the model carries on.
+          const paused = turn.stopReason === "pause_turn" || turn.stopReason === "compaction"
+          if (!paused || round >= (options.maxPauseResumes ?? 5)) break
           params.messages = [...messages, { role: "assistant", content: turn.content }]
         }
       } catch (e) {
@@ -150,6 +219,7 @@ interface Block {
   signature?: string
   json: string
   citations: unknown[]
+  compaction?: { content: string | null; encrypted_content: string | null }
 }
 
 /** One streamed request. Yields ModelEvents and returns the assistant content, for `pause_turn`. */
@@ -168,6 +238,7 @@ async function* streamRound(
   // message_start has the input counts; message_delta updates them with cumulative totals.
   const roundUsage: Record<string, number | null | undefined> = {}
   const id = (index: number) => `${round}:${index}`
+  let iterations: unknown[] | null | undefined
 
   for await (const event of stream as AsyncIterable<BetaRawMessageStreamEvent>) {
     switch (event.type) {
@@ -201,6 +272,9 @@ async function* streamRound(
             b.json += d.partial_json
             if (b.type === "tool_use") yield { type: "tool-input-delta", toolCallId: b.start.id, delta: d.partial_json }
             break
+          case "compaction_delta":
+            b.compaction = { content: d.content, encrypted_content: d.encrypted_content }
+            break
           case "citations_delta": {
             b.citations.push(d.citation)
             const c = d.citation as { type: string; url?: string; title?: string | null }
@@ -231,12 +305,18 @@ async function* streamRound(
           case "server_tool_use":
             yield { type: "tool-call", toolCallId: b.start.id, toolName: b.start.name, input: parseInput(b), providerExecuted: true }
             break
+          case "compaction":
+            yield { type: "raw", provider: "anthropic", value: block, compaction: { summary: b.compaction?.content ?? b.start.content ?? "" } }
+            break
           default:
             // Server tool results (web_search_tool_result, ...) arrive whole. The block itself is the
             // output, so it can be sent back unchanged next turn.
             if (typeof b.start.tool_use_id === "string") {
               const isError = isErrorResult(b.start)
               yield { type: "tool-result", toolCallId: b.start.tool_use_id, toolName: serverTools.get(b.start.tool_use_id) ?? b.type, output: b.start, isError }
+            } else {
+              // Anything else (a fallback boundary, an MCP call) is kept and sent back in place.
+              yield { type: "raw", provider: "anthropic", value: block }
             }
         }
         break
@@ -244,11 +324,16 @@ async function* streamRound(
       case "message_delta":
         stopReason = event.delta.stop_reason
         for (const [k, v] of Object.entries(event.usage)) if (typeof v === "number") roundUsage[k] = v
+        iterations = (event.usage as { iterations?: unknown[] | null }).iterations ?? iterations
         break
     }
   }
   if (request.signal.aborted) return undefined
   addUsage(usage, roundUsage)
+  // The top-level counts leave out compaction; it's billed as its own iteration.
+  for (const it of (iterations ?? []) as Array<Record<string, number | string | null | undefined>>) {
+    if (it.type === "compaction") addUsage(usage, it as Record<string, number | null | undefined>)
+  }
   return { stopReason, finishReason: mapStop(stopReason), content }
 }
 
@@ -260,6 +345,14 @@ function finishBlock(b: Block): BetaContentBlockParam | undefined {
       return { type: "thinking", thinking: b.text, signature: b.signature ?? b.start.signature ?? "" }
     case "redacted_thinking":
       return { type: "redacted_thinking", data: b.start.data }
+    case "compaction":
+      return {
+        ...b.start,
+        type: "compaction",
+        content: b.compaction?.content ?? b.start.content ?? null,
+        encrypted_content: b.compaction?.encrypted_content ?? b.start.encrypted_content ?? null,
+        ...(b.signature ? { signature: b.signature } : {}),
+      } as BetaContentBlockParam
     case "tool_use":
     case "server_tool_use": {
       const input = parseInput(b)
@@ -298,6 +391,7 @@ function mapStop(reason: string | null): ModelFinishReason {
     case "end_turn":
     case "stop_sequence":
     case "pause_turn":
+    case "compaction":
       return "stop"
     case "tool_use":
       return "tool-calls"
@@ -311,14 +405,49 @@ function mapStop(reason: string | null): ModelFinishReason {
   }
 }
 
-function toTool(t: ToolSpec, eager: boolean): BetaToolUnion {
-  if (t.provider) return { name: t.name, ...t.provider } as BetaToolUnion
+function toTools(specs: ToolSpec[], eager: boolean, search: ClaudeOptions["toolSearch"] = false): BetaToolUnion[] {
+  const tools = specs.map((t) => toTool(t, eager, !!search))
+  // Deferred tools need the search tool, which itself is never deferred.
+  if (search && specs.some((t) => t.defer)) {
+    tools.push(
+      search === "regex"
+        ? { type: "tool_search_tool_regex_20251119", name: "tool_search_tool_regex" }
+        : { type: "tool_search_tool_bm25_20251119", name: "tool_search_tool_bm25" },
+    )
+  }
+  return tools
+}
+
+function toTool(t: ToolSpec, eager: boolean, search: boolean): BetaToolUnion {
+  const defer = search && t.defer ? { defer_loading: true } : {}
+  if (t.provider) return { name: t.name, ...t.provider, ...defer } as BetaToolUnion
   return {
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema as never,
     ...(eager ? { eager_input_streaming: true } : {}),
+    ...defer,
   }
+}
+
+function toContextManagement(
+  request: ModelRequest,
+  compaction: ClaudeOptions["compaction"],
+  clearToolUses: ClaudeOptions["clearToolUses"],
+): BetaContextManagementConfig | undefined {
+  const edits: NonNullable<BetaContextManagementConfig["edits"]> = []
+  if (clearToolUses) edits.push({ type: "clear_tool_uses_20250919", ...(clearToolUses === true ? {} : clearToolUses) })
+  if (compaction && request.contextManagement !== false) {
+    const opts = compaction === true ? {} : compaction
+    const at = request.contextManagement?.compactAtTokens
+    edits.push({
+      type: "compact_20260112",
+      ...(at ? { trigger: { type: "input_tokens", value: Math.max(50_000, at) } } : {}),
+      ...(request.contextManagement?.instructions ? { instructions: request.contextManagement.instructions } : {}),
+      ...opts,
+    })
+  }
+  return edits.length ? { edits } : undefined
 }
 
 function toToolChoice(c: NonNullable<ModelRequest["toolChoice"]>): BetaToolChoice {
@@ -371,12 +500,38 @@ function toolResultContent(o: ToolResultContent): BetaToolResultBlockParam["cont
   )
 }
 
+/**
+ * After a mid-output fallback, thinking, tool calls and unpaired server tool calls from before
+ * the last `fallback` block came from the model that declined, and the API rejects them.
+ */
+function dropBeforeFallback(content: BetaContentBlockParam[], dropped: Set<string>): BetaContentBlockParam[] {
+  const boundary = content.findLastIndex((b) => b.type === "fallback")
+  if (boundary <= 0) return content
+  const resultIds = new Set(content.map((b) => (b as { tool_use_id?: string }).tool_use_id).filter(Boolean))
+  return content.filter((b, i) => {
+    if (i > boundary) return true
+    if (b.type === "thinking" || b.type === "redacted_thinking") return false
+    if (b.type === "tool_use") return (dropped.add(b.id), false)
+    if (b.type === "server_tool_use") return resultIds.has(b.id)
+    return true
+  })
+}
+
 const CACHEABLE = new Set(["text", "image", "document", "tool_use", "tool_result", "server_tool_use", "search_result"])
 
-/** ai-kit turns to Messages API messages. Exported for tests and custom drivers. */
-export function toAnthropicMessages(turns: ModelTurn[], cacheControl?: BetaCacheControlEphemeral): BetaMessageParam[] {
+/**
+ * ai-kit turns to Messages API messages. Exported for tests and custom drivers.
+ * `systemMessages: false` sends system turns as user text, for models without `role: "system"` messages.
+ */
+export function toAnthropicMessages(
+  turns: ModelTurn[],
+  cacheControl?: BetaCacheControlEphemeral,
+  options: { systemMessages?: boolean } = {},
+): BetaMessageParam[] {
   const out: BetaMessageParam[] = []
-  const push = (role: "user" | "assistant", content: BetaContentBlockParam[]) => {
+  // Tool calls left out of a turn that fell back mid-output; their results go too.
+  const dropped = new Set<string>()
+  const push = (role: "user" | "assistant" | "system", content: BetaContentBlockParam[]) => {
     if (!content.length) return
     // Tool results and the user text after them share one user turn.
     const last = out.at(-1)
@@ -386,6 +541,10 @@ export function toAnthropicMessages(turns: ModelTurn[], cacheControl?: BetaCache
 
   for (const t of turns) {
     switch (t.role) {
+      case "system":
+        if (options.systemMessages !== false) push("system", t.content.map((c) => ({ type: "text" as const, text: c.text })))
+        else push("user", t.content.map((c) => ({ type: "text" as const, text: `<system>\n${c.text}\n</system>` })))
+        break
       case "user":
         push(
           "user",
@@ -395,7 +554,7 @@ export function toAnthropicMessages(turns: ModelTurn[], cacheControl?: BetaCache
       case "tool":
         push(
           "user",
-          t.content.map((c) => ({
+          t.content.filter((c) => !dropped.has(c.toolCallId)).map((c) => ({
             type: "tool_result" as const,
             tool_use_id: c.toolCallId,
             content: toolResultContent(c.output),
@@ -436,9 +595,12 @@ export function toAnthropicMessages(turns: ModelTurn[], cacheControl?: BetaCache
               if (block) content.push(block as unknown as BetaContentBlockParam)
               break
             }
+            case "raw":
+              if (c.provider === "anthropic") content.push(c.value as BetaContentBlockParam)
+              break
           }
         }
-        push("assistant", content)
+        push("assistant", dropBeforeFallback(content, dropped))
         break
       }
     }

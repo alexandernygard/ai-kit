@@ -1,6 +1,6 @@
 # @alexandernygard/ai-kit-anthropic
 
-Model driver for the Claude API through the official Anthropic SDK, with prompt caching, adaptive thinking and effort, server tools, structured output and `pause_turn` handling.
+Model driver for the Claude API through the official Anthropic SDK, with prompt caching, adaptive thinking and effort, server-side compaction and tool search, refusal fallbacks, server tools, structured output and `pause_turn` handling.
 
 ```bash
 pnpm add @alexandernygard/ai-kit-anthropic @anthropic-ai/sdk

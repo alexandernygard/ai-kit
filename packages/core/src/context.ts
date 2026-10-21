@@ -24,10 +24,36 @@ export const COMPACTION_KEY = "ai-kit.compaction"
 /** Data part for a user-side message inside an assistant message, e.g. from an `onStop` hook. */
 export const NUDGE_PART = "ai-kit.nudge"
 
+/**
+ * Data part holding context shown to the model at that point: a context provider's output or an
+ * instruction from ai-kit. Context is stored where it was shown so later requests send the same
+ * history, rather than being re-injected and removed again.
+ */
+export const CONTEXT_PART = "ai-kit.context"
+export interface ContextPartData {
+  name: string
+  /** `system`: a system message (operator authority). `user`: text in the user's turn (untrusted input, like `clientContext`). */
+  role: "system" | "user"
+  text: string
+}
+
+/** Data part holding a provider block ai-kit doesn't model (a compaction summary, a fallback boundary). */
+export const RAW_PART = "ai-kit.raw"
+export interface RawPartData {
+  provider: string
+  value: unknown
+}
+
 export interface CompactionState {
   /** Messages up to and including this one are replaced by `summary`. */
   uptoMessageId: string
   summary: string
+  /**
+   * Reasoning in the turns kept after the summary was produced against the full history, so its
+   * signatures no longer match. It's left out up to this point: every part of earlier messages,
+   * and the first `parts` parts of `messageId`.
+   */
+  reasoningBefore?: { messageId: string; parts: number }
 }
 
 export interface TurnOptions {
@@ -47,10 +73,13 @@ const CLEARED = "[Output removed to save context. Run the tool again if you need
 export function toModelTurns(path: Message[], options: TurnOptions = {}): ModelTurn[] {
   let messages = path
   const turns: ModelTurn[] = []
+  const cutoff = options.compaction?.reasoningBefore
+  let stripUntil = cutoff ? path.findIndex((m) => m.id === cutoff.messageId) : -1
   if (options.compaction) {
     const i = path.findIndex((m) => m.id === options.compaction!.uptoMessageId)
     if (i >= 0) {
       messages = path.slice(i + 1)
+      if (stripUntil >= 0) stripUntil -= i + 1
       turns.push({
         role: "user",
         content: [{ type: "text", text: `<summary of the earlier conversation>\n${options.compaction.summary}\n</summary>` }],
@@ -84,23 +113,31 @@ export function toModelTurns(path: Message[], options: TurnOptions = {}): ModelT
       assistant = []
       results = []
     }
-    for (const p of m.parts) {
+    const keepReasoningFrom = mi < stripUntil ? Infinity : mi === stripUntil ? cutoff!.parts : 0
+    m.parts.forEach((p, pi) => {
       if (p.type === "step") flush()
       else if (p.type === "data" && p.name === NUDGE_PART) {
         flush()
         turns.push({ role: "user", content: [{ type: "text", text: String((p.data as { text?: string })?.text ?? "") }] })
+      } else if (p.type === "data" && p.name === CONTEXT_PART) {
+        const c = p.data as ContextPartData
+        flush()
+        turns.push({ role: c.role, content: [{ type: "text", text: c.text }] })
+      } else if (p.type === "data" && p.name === RAW_PART) {
+        const r = p.data as RawPartData
+        assistant.push({ type: "raw", provider: r.provider, value: r.value })
       } else if (p.type === "text" && p.text) assistant.push({ type: "text", text: p.text })
-      else if (p.type === "reasoning" && (p.text || p.providerMetadata)) {
+      else if (p.type === "reasoning" && (p.text || p.providerMetadata) && pi >= keepReasoningFrom) {
         assistant.push({ type: "reasoning", text: p.text, providerMetadata: p.providerMetadata })
       } else if (p.type === "tool" && !p.parentToolCallId) {
         const result = toolResult(p, m.status, clearHere ? clear.minChars ?? 4000 : Infinity, out)
-        if (!result) continue
+        if (!result) return
         const providerExecuted = p.runtime === "provider"
         assistant.push({ type: "tool-call", toolCallId: p.toolCallId, toolName: p.toolName, input: p.input ?? {}, providerExecuted, providerMetadata: p.providerMetadata })
         if (providerExecuted) assistant.push(result)
         else results.push(result)
       }
-    }
+    })
     flush()
   })
   return mergeTurns(turns)
