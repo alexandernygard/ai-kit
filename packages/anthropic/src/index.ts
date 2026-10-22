@@ -25,6 +25,9 @@ import type {
   BetaToolUnion,
   MessageCreateParamsStreaming,
 } from "@anthropic-ai/sdk/resources/beta/messages"
+import { claudeModelInfo } from "./models"
+
+export { CLAUDE_MODELS, claudeModelInfo, type ClaudeModelInfo } from "./models"
 
 type Effort = NonNullable<NonNullable<MessageCreateParamsStreaming["output_config"]>["effort"]>
 
@@ -95,14 +98,6 @@ const COMPACTION_BETA = "compact-2026-01-12"
 const CONTEXT_EDITING_BETA = "context-management-2025-06-27"
 const THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
-// What each model supports, by id. Options override these.
-const supports = (model: string, re: RegExp) => re.test(model)
-const CLAUDE_5 = /claude-(opus|sonnet|haiku|fable|mythos)-5/
-const COMPACTION_MODELS = /claude-(fable-5|mythos-5|mythos-preview|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6|haiku-5-5)/
-const SYSTEM_MESSAGE_MODELS = /claude-(opus-5|opus-4-8|fable-5|mythos-5|sonnet-5-5)/
-const PRESERVED_THINKING_MODELS = /claude-(fable-5-1|mythos-5-1|opus-5-5|sonnet-5-5|haiku-5-5)/
-const NO_FORCED_TOOL_CHOICE = /claude-(opus-5-5|sonnet-5-5|fable-5-1)/
-const TOOL_SEARCH_MODELS = /claude-(fable-5|mythos-5|opus-5|sonnet-5|haiku-5-5|opus-4-[5-8]|sonnet-4-[56]|haiku-4-5)/
 
 /**
  * A ModelDriver for the Claude API through the official Anthropic SDK.
@@ -123,11 +118,12 @@ const TOOL_SEARCH_MODELS = /claude-(fable-5|mythos-5|opus-5|sonnet-5|haiku-5-5|o
 export function claude(model: string, options: ClaudeOptions = {}): ModelDriver {
   let client = options.client
   const cache = options.cache ?? true
-  const compaction = options.compaction ?? supports(model, COMPACTION_MODELS)
-  const toolSearch = options.toolSearch ?? (supports(model, TOOL_SEARCH_MODELS) ? "bm25" : false)
-  const systemMessages = options.systemMessages ?? supports(model, SYSTEM_MESSAGE_MODELS)
-  const binding = options.thinkingBinding ?? (supports(model, PRESERVED_THINKING_MODELS) ? "drop_block" : false)
-  const fallbacks = options.fallbacks ?? (!options.client && supports(model, CLAUDE_5) ? "default" : false)
+  const info = claudeModelInfo(model)
+  const compaction = options.compaction ?? !!info.compaction
+  const toolSearch = options.toolSearch ?? (info.toolSearch ? "bm25" : false)
+  const systemMessages = options.systemMessages ?? !!info.systemMessages
+  const binding = options.thinkingBinding ?? (info.preservedThinking ? "drop_block" : false)
+  const fallbacks = options.fallbacks ?? (!options.client && info.fallbacks ? "default" : false)
   const cacheControl: BetaCacheControlEphemeral | undefined = cache
     ? { type: "ephemeral", ...(typeof cache === "object" && cache.ttl ? { ttl: cache.ttl } : {}) }
     : undefined
@@ -144,7 +140,7 @@ export function claude(model: string, options: ClaudeOptions = {}): ModelDriver 
       reasoning: true,
       contextManagement: compaction !== false,
       toolSearch: toolSearch !== false,
-      forcedToolChoice: !supports(model, NO_FORCED_TOOL_CHOICE),
+      forcedToolChoice: info.forcedToolChoice !== false,
       ...options.capabilities,
     },
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {

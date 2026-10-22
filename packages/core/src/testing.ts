@@ -83,3 +83,5 @@ export async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   for await (const x of iterable) out.push(x)
   return out
 }
+
+export { CONTRACT_TOOL, driverContract, type DriverContractCase, type DriverScenario } from "./driver-contract"

@@ -1,0 +1,30 @@
+name: Live API
+
+# Runs the driver contract and smoke tests against the real Claude API.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model id
+        default: claude-haiku-5-5
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.AI_KIT_LIVE_NIGHTLY == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:live
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_KIT_LIVE_MODEL: ${{ inputs.model || 'claude-haiku-5-5' }}

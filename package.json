@@ -9,7 +9,8 @@
     "test:watch": "vitest",
     "changeset": "changeset",
     "version-packages": "changeset version && pnpm install --lockfile-only",
-    "release": "pnpm typecheck && pnpm test && pnpm build && changeset publish"
+    "release": "pnpm typecheck && pnpm test && pnpm build && changeset publish",
+    "test:live": "AI_KIT_LIVE=1 vitest run packages/anthropic/test/live.test.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

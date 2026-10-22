@@ -22,16 +22,16 @@ This plan comes from reviewing the AI code in xl2, ppt2 and word2. Each re-imple
 
 Nothing has run against the real API yet. Do this before building more.
 
-- [ ] **Live-API smoke tests.** Opt-in job (`ANTHROPIC_API_KEY` as a CI secret), run nightly. Cover: streaming text, tool call round trip, abort, thinking, server compaction, fallbacks, usage and errors. Extend `examples/node-cli/smoke.ts`.
-- [ ] **Driver contract suite.** One shared test set every `ModelDriver` must pass (tool calls, abort, usage, error mapping). Always runs against `mockModel`; runs against the real API in the live job.
-- [ ] **Shape conformance test.** Run one agent three ways (direct `kit`, `createHandler` + `Chat` over HTTP, `directTransport`) and assert identical events after normalizing ids and timestamps.
-- [ ] **Model capability table.** Replace the model-id regexes in `packages/anthropic/src/index.ts` with one table plus tests, so a new model is a one-line change.
+- [x] **Live-API smoke tests.** `pnpm test:live` (`packages/anthropic/test/live.test.ts`) covers streaming text, tool call round trip, abort, thinking, server compaction, fallbacks, usage and errors. The nightly job is `.github/workflows/live.yml`; it needs the `ANTHROPIC_API_KEY` secret and the `AI_KIT_LIVE_NIGHTLY` variable set to `true`.
+- [x] **Driver contract suite.** `driverContract` in `@alexandernygard/ai-kit/testing`; the mock, Claude and AI SDK drivers pass it.
+- [x] **Shape conformance test.** (`packages/client/test/conformance.test.ts`) Run one agent three ways (direct `kit`, `createHandler` + `Chat` over HTTP, `directTransport`) and assert identical events after normalizing ids and timestamps.
+- [x] **Model capability table.** `CLAUDE_MODELS` in `packages/anthropic/src/models.ts`; a new model is a one-line change.
 
-Done when: the live job and conformance test pass in CI.
+Done when: the live job and conformance test pass in CI. Still open: the live suite hasn't run yet (no API key on the dev machine), and the repo has no GitHub remote for the workflows.
 
 ## Phase 2: Split the runner
 
-- [ ] **Split `packages/core/src/runner.ts`** (1,223 lines) by responsibility: step loop, tool execution, approvals, compaction. Keep the public API and use existing tests as the safety net. No behaviour change.
+- [x] **Split `packages/core/src/runner.ts`** (1,223 lines, now `runner/*.ts`) by responsibility: step loop, tool execution, approvals, compaction. Keep the public API and use existing tests as the safety net. No behaviour change.
 
 Done when: runner is split and all existing tests pass unchanged. Do this before Phase 3, which adds to the loop.
 
