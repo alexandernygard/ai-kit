@@ -208,6 +208,53 @@ export function claude(model: string, options: ClaudeOptions = {}): ModelDriver 
   }
 }
 
+/** What `claudeFromSettings` reads before each call. `AssistantSettings` from ai-kit-client fits. */
+export interface ClaudeSettings {
+  apiKey?: string
+  model: string
+  effort?: ModelRequest["settings"]["effort"]
+}
+
+/**
+ * A Claude driver that follows the user's settings: the API key, model and effort are read on
+ * every call, so a settings panel takes effect on the next message. Made for browser-only apps
+ * where users bring their own key (`dangerouslyAllowBrowser` is set for you).
+ *
+ * ```ts
+ * const settings = settingsStore<AssistantSettings>({ model: "claude-opus-5-5" })
+ * defineAgent({ name: "assistant", model: claudeFromSettings(settings.get) })
+ * ```
+ */
+export function claudeFromSettings(get: () => ClaudeSettings, options: Omit<ClaudeOptions, "client"> = {}): ModelDriver {
+  let cached: { key: string; driver: ModelDriver } | undefined
+  const current = () => {
+    const s = get()
+    const key = `${s.apiKey ?? ""}\n${s.model}`
+    if (cached?.key !== key) {
+      cached = {
+        key,
+        driver: claude(s.model, { ...options, clientOptions: { ...options.clientOptions, apiKey: s.apiKey, dangerouslyAllowBrowser: true } }),
+      }
+    }
+    return { settings: s, driver: cached.driver }
+  }
+  return {
+    kind: "model",
+    provider: "anthropic",
+    get modelId() {
+      return get().model
+    },
+    get capabilities() {
+      return current().driver.capabilities
+    },
+    async *stream(request) {
+      const { settings, driver } = current()
+      if (!settings.apiKey) throw new Error("Add your Anthropic API key in settings.")
+      yield* driver.stream(settings.effort ? { ...request, settings: { ...request.settings, effort: settings.effort } } : request)
+    },
+  }
+}
+
 interface Block {
   type: string
   start: Record<string, any>

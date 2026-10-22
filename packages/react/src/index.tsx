@@ -3,10 +3,12 @@ import {
   Chat,
   type ChatOptions,
   type ChatState,
+  findDocumentSession,
   httpTransport,
   type HttpTransportOptions,
   type ListQuery,
   segments,
+  type SettingsStore,
   type ToolNode,
   type Transport,
 } from "@alexandernygard/ai-kit-client"
@@ -129,6 +131,60 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     [chat],
   )
   return { ...state, ...actions, isRunning: state.status === "submitted" || state.status === "streaming" }
+}
+
+export interface UseAssistantOptions extends Omit<UseChatOptions, "sessionId" | "newSession"> {
+  /** The open document. Each document keeps its own conversation. */
+  documentId: string
+  agent?: string
+  /** Stored on new sessions next to `documentId`. */
+  metadata?: Record<string, unknown>
+}
+
+export type UseAssistantResult = UseChatResult & { documentId: string }
+
+/**
+ * The assistant panel for a document editor: one conversation per document, reopened when the
+ * user comes back to it. Switching `documentId` switches the conversation.
+ *
+ * ```tsx
+ * const { kit, transport } = createBrowserKit({ agents: [assistant] })
+ * const chat = useAssistant({ transport, documentId: file.id, getContext: () => ({ selection }) })
+ * ```
+ */
+export function useAssistant(options: UseAssistantOptions): UseAssistantResult {
+  const { documentId, agent, metadata, ...chatOptions } = options
+  const ctx = useContext(TransportContext)
+  const transport = options.transport ?? ctx
+  if (!transport) throw new Error("useAssistant needs a transport: use <AIKitProvider> or pass one.")
+  const chat = useChat({ ...chatOptions, transport })
+  const [resolving, setResolving] = useState(true)
+  const metaKey = JSON.stringify(metadata ?? {})
+
+  useEffect(() => {
+    let live = true
+    const newSession = { agent, metadata: { ...metadata, documentId } }
+    chat.reset(newSession)
+    setResolving(true)
+    findDocumentSession(transport, documentId, agent)
+      .catch(() => undefined)
+      .then(async (found) => {
+        if (!live) return
+        setResolving(false)
+        if (found) await chat.chat.load(found.id)
+      })
+    return () => {
+      live = false
+    }
+  }, [transport, documentId, agent, metaKey])
+
+  return { ...chat, status: resolving ? "loading" : chat.status, documentId }
+}
+
+/** Read and update a `settingsStore` (API key, model, effort). */
+export function useSettings<S>(store: SettingsStore<S>): [S, (patch: Partial<S>) => void] {
+  const settings = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return [settings, store.set]
 }
 
 export interface UseSessionsResult {

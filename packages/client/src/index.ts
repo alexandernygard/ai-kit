@@ -9,4 +9,13 @@ export {
   type HttpTransportOptions,
   type DirectTransportOptions,
 } from "./transport"
-export { segments, sourcesOf, todosOf, contextUsageOf, toolLabel, isToolActive, toolDuration, type Segment, type ToolNode } from "./parts"
+export { segments, sourcesOf, todosOf, contextUsageOf, toolLabel, isToolActive, toolDuration, toolInput, type Segment, type ToolNode } from "./parts"
+export {
+  createBrowserKit,
+  findDocumentSession,
+  indexedDBKV,
+  settingsStore,
+  type AssistantSettings,
+  type BrowserKitOptions,
+  type SettingsStore,
+} from "./browser"

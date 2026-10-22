@@ -39,11 +39,11 @@ Done when: runner is split and all existing tests pass unchanged. Do this before
 
 What all three apps need first. Goes into the existing `client` and `react` packages, not a new one.
 
-- [ ] **Browser entry point**: `createBrowserKit` with `dangerouslyAllowBrowser`, a bring-your-own-key and model/effort settings store, `useAssistant`, wired to `directTransport` and an IndexedDB store. Per-document sessions are a session-id convention (one session per document id), not a separate feature.
-- [ ] **`sourceTools`**: `read`, `edit` (unique exact match), `write`, plus a feedback hook where the app returns a compile/evaluate/lint report to the model.
-- [ ] **Partial tool input helper**: expose live partial input per tool call (from `tool-input-delta`) so UIs can preview a document as it streams.
-- [ ] Confirm images in tool results work end to end through runner and driver (screenshots back to the model).
-- [ ] **Starter**: a browser-only example built and tested in CI, next to `node-cli`.
+- [x] **Browser entry point**: `createBrowserKit` (IndexedDB store, `directTransport`), `settingsStore` and `claudeFromSettings` for bring-your-own-key with model and effort, `useAssistant` and `useSettings`. Per-document sessions are found by `metadata.documentId` (`findDocumentSession`).
+- [x] **`sourceTools`**: `read_file`, `edit_file` (unique exact match), `write_file`, plus a `feedback` hook where the app returns a compile/evaluate/lint report to the model.
+- [x] **Partial tool input helper**: `toolInput(part)` (and `parsePartialJson`) gives live partial input per tool call so UIs can preview a document as it streams.
+- [x] Confirm images in tool results work end to end through runner and driver (screenshots back to the model).
+- [x] **Starter**: `examples/browser-editor`, typechecked and built in CI.
 
 Done when: a browser-only app needs only its own tool bodies, system prompt and one feedback function.
 

@@ -4,7 +4,7 @@
   "description": "Browser client for ai-kit: typed API, streaming, reconnects, and a framework-agnostic chat controller (works as a Svelte store).",
   "type": "module",
   "license": "MIT",
-  "author": "Alexander Nyg\u00e5rd",
+  "author": "Alexander Nygård",
   "sideEffects": false,
   "files": [
     "dist",
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@alexandernygard/ai-kit": "workspace:^",
-    "@alexandernygard/ai-kit-server": "workspace:^"
+    "@alexandernygard/ai-kit-server": "workspace:^",
+    "fake-indexeddb": "^6.2.6"
   }
 }

@@ -107,6 +107,46 @@ describe("claude driver", () => {
     expect(calls[1].messages[2].content[0]).toMatchObject({ type: "tool_result", is_error: true })
   })
 
+  it("sends images from a tool result back to the model, on this step and the next turn", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    const screenshot = tool({
+      name: "screenshot",
+      description: "Render the document",
+      input: jsonSchema<Record<string, never>>({ type: "object", properties: {} }),
+      execute: () => ({ png, note: "Slide 1" }),
+      toModelOutput: (o: { png: string; note: string }) => ({
+        type: "content",
+        value: [
+          { type: "text", text: o.note },
+          { type: "image", mediaType: "image/png", data: `data:image/png;base64,${o.png}` },
+        ],
+      }),
+    })
+    const { client, calls } = mockClient([
+      [start(), ...block(0, { type: "tool_use", id: "c1", name: "screenshot", input: {} }), ...stop("tool_use")],
+      [start(), ...text(0, "Looks centered."), ...stop("end_turn")],
+      [start(), ...text(0, "Yes."), ...stop("end_turn")],
+    ])
+    const kit = createKit({ agents: [defineAgent({ name: "a", model: claude("claude-opus-5-5", { client }), tools: [screenshot] })] })
+    const session = await kit.createSession()
+    await session.send("Check the slide").result
+    await session.send("Sure?").result
+
+    const expected = {
+      type: "tool_result",
+      tool_use_id: "c1",
+      content: [
+        { type: "text", text: "Slide 1" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+      ],
+    }
+    const { cache_control, ...now } = calls[1].messages[2].content[0]
+    expect(cache_control).toEqual({ type: "ephemeral" })
+    expect(now).toEqual(expected)
+    // Stored with the session and sent again, unchanged, on later turns.
+    expect(calls[2].messages[2].content[0]).toEqual(expected)
+  })
+
   it("passes server tools through and sends their result blocks back unchanged", async () => {
     const result = { type: "web_search_tool_result", tool_use_id: "s1", content: [{ type: "web_search_result", url: "https://yr.no", title: "Yr", encrypted_content: "enc" }] }
     const { client, calls } = mockClient([

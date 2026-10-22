@@ -1,4 +1,4 @@
-import type { ContextUsage, DataPart, FilePart, Message, ReasoningPart, SourcePart, TextPart, Todo, ToolPart } from "@alexandernygard/ai-kit"
+import { type ContextUsage, type DataPart, type FilePart, type Message, parsePartialJson, type ReasoningPart, type SourcePart, type TextPart, type Todo, type ToolPart } from "@alexandernygard/ai-kit"
 
 /** A tool call with the calls it made (code mode) attached. */
 export interface ToolNode extends ToolPart {
@@ -107,4 +107,17 @@ function humanize(name: string) {
   const short = name.startsWith("mcp__") ? name.split("__").slice(2).join(" ") : name
   const s = short.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim().toLowerCase()
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
+ * A tool call's input: the final input once it's complete, otherwise what has streamed so far,
+ * parsed leniently. Use it to preview a document while the model is still writing it.
+ *
+ * ```tsx
+ * const { content } = toolInput<{ content: string }>(part) ?? {}
+ * ```
+ */
+export function toolInput<T = Record<string, unknown>>(t: ToolPart): Partial<T> | undefined {
+  if (t.state !== "input-streaming") return t.input as Partial<T> | undefined
+  return t.inputText ? (parsePartialJson(t.inputText) as Partial<T> | undefined) : undefined
 }

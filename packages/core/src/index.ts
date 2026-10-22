@@ -88,6 +88,8 @@ export { kvStore, memoryKV, memoryStore, pageSessions, type KV } from "./store/k
 export { sqlStore, sqlSchema, type SqlExecutor, type SqlStoreOptions } from "./store/sql"
 export { chain, parallel, route, evaluateLoop, type StepOptions } from "./workflows"
 export { createId } from "./id"
+export { parsePartialJson } from "./partial-json"
+export { sourceTools, memoryFiles, type SourceFiles, type SourceChange, type SourceToolsOptions } from "./source-tools"
 export {
   toSessionInfo,
   type SessionInfo,

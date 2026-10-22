@@ -4,14 +4,35 @@
     {
       "name": "example-api",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["examples/react-chat/server.ts"],
+      "runtimeArgs": [
+        "examples/react-chat/server.ts"
+      ],
       "port": 8787
     },
     {
       "name": "example-web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "example-react-chat", "web", "--port", "5173"],
+      "runtimeArgs": [
+        "--filter",
+        "example-react-chat",
+        "web",
+        "--port",
+        "5173"
+      ],
       "port": 5173
+    },
+    {
+      "name": "browser-editor",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "example-browser-editor",
+        "dev",
+        "--port",
+        "5174",
+        "--strictPort"
+      ],
+      "port": 5174
     }
   ]
 }

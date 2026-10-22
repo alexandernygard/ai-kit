@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
-import { clientContext, createKit, defineAgent, jsonSchema, tool } from "@alexandernygard/ai-kit"
+import { clientContext, createKit, defineAgent, jsonSchema, textOf, tool } from "@alexandernygard/ai-kit"
 import { mockModel } from "@alexandernygard/ai-kit/testing"
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
-import { AIKitProvider, directTransport, MessageParts, useChat, useSessions } from "../src/index"
+import { AIKitProvider, directTransport, MessageParts, settingsStore, useAssistant, useChat, useSessions, useSettings } from "../src/index"
 
 const weather = tool({
   name: "get_weather",
@@ -73,5 +73,31 @@ describe("react", () => {
     await waitFor(() => expect(result.current.session?.title).toBe("A"))
     rerender({ id: undefined })
     await waitFor(() => expect(result.current.sessionId).toBeNull())
+  })
+
+  it("useAssistant keeps one conversation per document", async () => {
+    const model = mockModel([{ text: "About doc A." }, { text: "About doc B." }])
+    const transport = directTransport(createKit({ agents: [defineAgent({ name: "a", model })] }))
+    const { result, rerender } = renderHook(({ documentId }) => useAssistant({ transport, documentId }), { initialProps: { documentId: "A" } })
+    await waitFor(() => expect(result.current.status).toBe("idle"))
+    await act(() => result.current.send("Tell me about A"))
+    expect(result.current.path.map(textOf)).toEqual(["Tell me about A", "About doc A."])
+
+    rerender({ documentId: "B" })
+    await waitFor(() => expect(result.current.status).toBe("idle"))
+    expect(result.current.path).toEqual([])
+    await act(() => result.current.send("And B?"))
+    expect(result.current.path.map(textOf)).toEqual(["And B?", "About doc B."])
+
+    rerender({ documentId: "A" })
+    await waitFor(() => expect(result.current.path.map(textOf)).toEqual(["Tell me about A", "About doc A."]))
+    expect(result.current.documentId).toBe("A")
+  })
+
+  it("useSettings follows a settings store", () => {
+    const store = settingsStore({ model: "claude-opus-5-5" }, { storage: { getItem: () => null, setItem: () => {} } })
+    const { result } = renderHook(() => useSettings(store))
+    act(() => result.current[1]({ model: "claude-sonnet-5-5" }))
+    expect(result.current[0].model).toBe("claude-sonnet-5-5")
   })
 })

@@ -1,0 +1,27 @@
+{
+  "name": "example-browser-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@alexandernygard/ai-kit": "workspace:*",
+    "@alexandernygard/ai-kit-anthropic": "workspace:*",
+    "@alexandernygard/ai-kit-react": "workspace:*",
+    "@alexandernygard/components": "^0.1.4",
+    "@anthropic-ai/sdk": "^0.134.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.4"
+  }
+}
