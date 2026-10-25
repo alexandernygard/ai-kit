@@ -4,6 +4,9 @@
   "description": "Node.js pieces for ai-kit: file store, SKILL.md loader, worker sandbox for code mode, file and shell tools, node:http adapter.",
   "type": "module",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/alexandernygard/ai-kit.git", "directory": "packages/node" },
+  "homepage": "https://github.com/alexandernygard/ai-kit/tree/main/packages/node#readme",
+  "bugs": "https://github.com/alexandernygard/ai-kit/issues",
   "author": "Alexander Nyg\u00e5rd",
   "sideEffects": false,
   "files": [

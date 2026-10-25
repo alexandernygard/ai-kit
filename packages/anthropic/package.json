@@ -4,6 +4,9 @@
   "description": "ai-kit model driver for the Claude API through the official Anthropic SDK.",
   "type": "module",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/alexandernygard/ai-kit.git", "directory": "packages/anthropic" },
+  "homepage": "https://github.com/alexandernygard/ai-kit/tree/main/packages/anthropic#readme",
+  "bugs": "https://github.com/alexandernygard/ai-kit/issues",
   "author": "Alexander Nygård",
   "sideEffects": false,
   "files": [
