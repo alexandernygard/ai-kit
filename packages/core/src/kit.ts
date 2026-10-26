@@ -10,6 +10,7 @@ import { mergePermissions, type Permissions } from "./permissions"
 import { type Plugin, type ResolvedPlugin, resolvePlugin } from "./plugin"
 import { Run, type RunResult } from "./run"
 import type { ResolvedAgent, RunnerHost } from "./runner"
+import type { InferSchema, JSONSchema, Schema } from "./schema"
 import { type SendOptions, Session } from "./session"
 import type { Skill } from "./skills"
 import { memoryStore } from "./store/kv"
@@ -246,10 +247,13 @@ export class Kit<Ctx = any> {
    * const { output } = await kit.generate("Extract the invoice fields", { agent: "extractor", output: invoiceSchema })
    * ```
    */
-  async generate(content: UserContent, options: SendOptions<Ctx> & { agent?: string; ownerId?: string } = {}): Promise<RunResult> {
+  async generate<S extends Schema | JSONSchema | undefined = undefined>(
+    content: UserContent,
+    options: SendOptions<Ctx> & { agent?: string; ownerId?: string; output?: S } = {},
+  ): Promise<RunResult<undefined extends S ? unknown : InferSchema<S>>> {
     const session = await this.createSession({ agent: options.agent, ownerId: options.ownerId, title: "(generate)", metadata: { ephemeral: true } })
     try {
-      return await session.send(content, options).result
+      return (await session.send(content, options).result) as RunResult<undefined extends S ? unknown : InferSchema<S>>
     } finally {
       await session.delete().catch(() => {})
     }

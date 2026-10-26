@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, expectTypeOf, it } from "vitest"
+import { z } from "zod"
 import {
   createKit,
   defineAgent,
@@ -326,6 +327,15 @@ describe("structured output", () => {
     expect(r.output).toEqual({ name: "Ada", age: 36 })
     expect(model.requests.length).toBe(1)
     expect((await kit.listSessions()).sessions.length).toBe(0)
+  })
+
+  it("types the output from the schema", async () => {
+    const model = mockModel([{ toolCalls: [{ name: "structured_output", input: { total: 120, due: "2026-11-01" } }] }])
+    const kit = createKit({ agents: [defineAgent({ name: "a", model })] })
+    const r = await kit.generate("Extract the invoice", { output: z.object({ total: z.number(), due: z.string() }) })
+    expectTypeOf(r.output).toEqualTypeOf<{ total: number; due: string } | undefined>()
+    expect(r.output?.total).toBe(120)
+    expectTypeOf((await kit.generate("x")).output).toBeUnknown()
   })
 
   it("uses the tool, not JSON mode, when the agent has tools", async () => {

@@ -16,14 +16,14 @@ export type ToolResponse =
     }
   | { output: unknown; isError?: boolean }
 
-export interface RunResult {
+export interface RunResult<O = unknown> {
   runId: string
   sessionId: string
   message: Message
   /** The final answer's text. */
   text: string
   /** Validated structured output, when an output schema was given. */
-  output?: unknown
+  output?: O
   finishReason: FinishReason
   usage: Usage
   /** Calls waiting on approvals or client outputs when the run ended with `awaiting-input`. */

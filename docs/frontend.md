@@ -99,9 +99,38 @@ If a pattern keeps coming back, build it in the component library (for example a
 
 ## Running the kit in the browser
 
-`directTransport(kit)` gives the same API with no server. Use it for local-first apps with a browser-safe model (a proxy, or an in-browser model driver), Electron and tests:
+The whole kit can run in the page, with no server. Apps where each user brings their own Anthropic API key (a document editor, a spreadsheet, a local-first tool) use this, as do Electron apps and tests.
 
 ```ts
-const kit = createKit({ agents: [agent], store: kvStore(indexedDbKV) })
-const chat = new Chat({ transport: directTransport(kit, { context }) })
+import { defineAgent, sourceTools } from "@alexandernygard/ai-kit"
+import { claudeFromSettings } from "@alexandernygard/ai-kit-anthropic"
+import { type AssistantSettings, createBrowserKit, settingsStore } from "@alexandernygard/ai-kit-react"
+
+export const settings = settingsStore<AssistantSettings>({ model: "claude-opus-5-5", effort: "medium" }, { key: "myapp:settings" })
+
+const editor = defineAgent({
+  name: "editor",
+  model: claudeFromSettings(settings.get),
+  tools: sourceTools({ files, feedback: ({ after }) => validate(after) }),
+})
+
+export const { kit, transport } = createBrowserKit({ agents: [editor], database: "myapp" })
 ```
+
+- `createBrowserKit` stores sessions in IndexedDB (in memory where IndexedDB isn't available) and returns a `directTransport`, so `Chat`, `useChat` and `useAssistant` work exactly as they do against a server. Pass `store` to use another store, and `transport` for `directTransport` options such as `context`.
+- `settingsStore` keeps the key, model and effort in localStorage. `useSettings(settings)` returns `[settings, set]` for a settings panel.
+- `claudeFromSettings` reads the settings on every call, so a new key or model takes effect immediately. It calls the Claude API from the browser (`dangerouslyAllowBrowser`), and fails the run with "Add your Anthropic API key in settings." when there's no key.
+- Tools run in the page, so `execute` can read and change app state directly. Client tools are only needed when the agent runs on a server.
+
+For an assistant beside a document, `useAssistant` keeps one conversation per document:
+
+```tsx
+const chat = useAssistant({ transport, documentId: doc.id, getContext: () => ({ documentId: doc.id }) })
+const [s, set] = useSettings(settings)
+```
+
+It stores `documentId` in the session's metadata, reopens the newest session for that document (`findDocumentSession`), and switches conversations when `documentId` changes. While it looks, `status` is `loading`.
+
+`toolInput(part)` returns a tool call's input while it streams, parsed from partial JSON, so the document can show a `write_file` as it's written.
+
+[examples/browser-editor](../examples/browser-editor) has all of this working.
