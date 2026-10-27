@@ -81,6 +81,8 @@ export interface RunnerHost {
   unregisterRun(run: Run): void
   createRun(sessionId: string, agent: string): Run
   persistEvents: boolean
+  /** How long a run's lease on its session lasts; the runner renews it while alive. */
+  runLeaseMs: number
   /** Create a child session and run an agent in it. Used for subagents. */
   runChild(params: {
     parent: SessionRecord

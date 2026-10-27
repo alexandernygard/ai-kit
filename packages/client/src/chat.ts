@@ -68,8 +68,14 @@ export interface ChatOptions {
    * the `clientContext()` context provider.
    */
   getContext?: () => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
-  /** Reconnect to a run when the stream drops. Default 3 attempts. */
+  /** Reconnect to a run when the stream drops or closes before the run finished. Default 3 attempts. */
   reconnectAttempts?: number
+  /**
+   * When reconnecting fails, how long to keep checking the session before giving up, in ms.
+   * A run whose process died is ended by the server once its lease lapses (`runLeaseMs`, 15
+   * seconds by default), so this should be longer than that. Default 30 seconds.
+   */
+  lostRunTimeoutMs?: number
   onEvent?: (event: AgentEvent) => void
   onFinish?: (message: Message) => void
   onError?: (error: Error) => void
@@ -106,6 +112,9 @@ export class Chat {
   private controller: AbortController | null = null
   private assistantId: string | null = null
   private lastSeq = -1
+  /** The current stream delivered `run-finish` (or failed before the run started). */
+  private ended = false
+  private started = false
   private responses: Record<string, ToolResponse> = {}
   private busy: Promise<void> = Promise.resolve()
   private liveMode = new Map<string, "wait" | "suspend">()
@@ -347,7 +356,6 @@ export class Chat {
   }
 
   private async consume(open: () => Promise<RunStream>, optimisticId?: string) {
-    let attempts = 0
     let stream: RunStream
     try {
       stream = await open()
@@ -356,46 +364,90 @@ export class Chat {
       this.controller = null
       return this.fail(e)
     }
+    const signal = this.controller?.signal
     let runId = stream.runId
+    let attempts = 0
     this.lastSeq = -1
+    this.ended = false
+    this.started = false
     for (;;) {
+      let error: unknown
       try {
         for await (const env of stream.events) {
           runId = env.runId
-          this.handle(env, optimisticId)
+          if (this.handle(env, optimisticId)) attempts = 0
         }
-        break
       } catch (e) {
-        if (this.controller?.signal.aborted) break
-        if (!runId || attempts++ >= (this.options.reconnectAttempts ?? 3)) {
-          this.controller = null
-          return this.fail(e)
-        }
-        await new Promise((r) => setTimeout(r, 500 * attempts))
-        try {
-          stream = await this.options.transport.events(runId, { sessionId: this.state.sessionId!, after: this.lastSeq }, this.controller?.signal)
-        } catch {}
+        error = e
       }
+      if (this.ended || signal?.aborted) break
+      // The stream dropped, or closed before the run finished (its process may have died).
+      if (!runId) {
+        this.controller = null
+        return this.fail(error ?? new Error("The agent's stream ended before it finished."))
+      }
+      if (attempts++ >= (this.options.reconnectAttempts ?? 3)) {
+        await this.resync(runId, error, signal)
+        this.controller = null
+        return
+      }
+      await sleep(500 * attempts)
+      if (signal?.aborted) break
+      try {
+        stream = await this.options.transport.events(runId, { sessionId: this.state.sessionId!, after: this.lastSeq }, signal)
+      } catch {}
     }
     this.controller = null
     if (this.state.status === "streaming" || this.state.status === "submitted") this.set({ status: "idle" })
   }
 
-  private handle(env: EventEnvelope, optimisticId?: string) {
-    if (env.seq <= this.lastSeq) return
+  /**
+   * Reconnecting didn't bring the run back. Check the session until it no longer names this
+   * run as active (it finished, or the server recovered it after its process died), then show
+   * what's stored.
+   */
+  private async resync(runId: string, error: unknown, signal?: AbortSignal) {
+    const id = this.state.sessionId
+    const deadline = Date.now() + (this.options.lostRunTimeoutMs ?? 30_000)
+    while (id && !signal?.aborted) {
+      try {
+        const { session, messages } = await this.options.transport.getSession(id)
+        if (signal?.aborted) return
+        if (session.activeRunId !== runId) {
+          const head = messages.find((m) => m.id === session.headId)
+          const stopped = head?.status === "aborted" || head?.status === "error"
+          const message = "The agent stopped before it finished."
+          this.set({ session, messages, headId: session.headId, runId: null, status: stopped ? "error" : statusOf(session, messages), error: stopped ? message : null })
+          if (stopped) this.options.onError?.(new Error(message))
+          else if (session.activeRunId) void this.join(session.activeRunId)
+          return
+        }
+      } catch {}
+      if (Date.now() >= deadline) break
+      await sleep(1000)
+    }
+    if (!signal?.aborted) this.fail(error ?? new Error("Lost the connection to the agent."))
+  }
+
+  /** Apply one event. Returns false for a duplicate (already seen before a reconnect). */
+  private handle(env: EventEnvelope, optimisticId?: string): boolean {
+    if (env.seq <= this.lastSeq) return false
     this.lastSeq = env.seq
     const e = env.event
+    if (e.type === "run-start") this.started = true
+    // A run that fails before it starts sends only an error.
+    if (e.type === "run-finish" || (e.type === "error" && !this.started)) this.ended = true
     if (e.type === "tool-approval-request" || e.type === "tool-awaiting-output") this.liveMode.set(e.toolCallId, e.mode)
     this.options.onEvent?.(e)
     if (e.type === "run-start") {
       this.assistantId = e.message.id
       const messages = optimisticId ? this.state.messages.filter((m) => m.id !== optimisticId) : this.state.messages
       this.set({ messages: reduceMessages(messages, e, undefined), headId: e.message.id, runId: e.runId, status: "streaming" })
-      return
+      return true
     }
     if (e.type === "session-update") {
       if (this.state.session) this.set({ session: { ...this.state.session, ...e.patch, state: { ...this.state.session.state, ...e.patch.state } } })
-      return
+      return true
     }
     const messages = reduceMessages(this.state.messages, e, this.assistantId ?? undefined, { nestSubagents: true })
     if (e.type === "tool-awaiting-output") queueMicrotask(() => this.runClientTool(e.toolCallId))
@@ -403,13 +455,14 @@ export class Chat {
       const status: ChatStatus = e.finishReason === "awaiting-input" ? "awaiting-input" : e.finishReason === "error" ? "error" : "idle"
       this.set({ messages, status, runId: null, error: status === "error" ? (this.state.error ?? "The agent hit an error.") : null })
       if (status !== "error") this.options.onFinish?.(e.message)
-      return
+      return true
     }
     if (e.type === "error") {
       this.set({ messages, error: e.error.message })
-      return
+      return true
     }
     if (messages !== this.state.messages) this.set({ messages })
+    return true
   }
 
   private runClientTool(toolCallId: string) {
@@ -435,6 +488,8 @@ export class Chat {
     this.options.onError?.(error)
   }
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function pendingIds(message: Message | undefined): string[] {
   return (message?.parts ?? [])

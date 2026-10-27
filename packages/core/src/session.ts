@@ -250,7 +250,9 @@ export class Session<Ctx = any> {
     await this.kit.ready()
     let rec = await this.kit.store.getSession(this.id)
     if (!rec) throw new Error(`Session ${this.id} not found`)
+    rec = await this.kit.recoverSession(rec)
     const active = rec.activeRunId ? this.kit.getRun(rec.activeRunId) : undefined
+    if (rec.activeRunId && !active) throw new Error("This session has a run in progress in another process.")
     if (active && active !== run && !active.done) {
       if (!options.interrupt) throw new Error("This session already has a run in progress. Pass { interrupt: true } to stop it.")
       active.abort()

@@ -94,7 +94,12 @@ export function toolLabel(t: ToolPart): string {
   }
 }
 
-export function isToolActive(t: ToolPart): boolean {
+/**
+ * Whether a tool call is still in progress. Pass its message too: a call can only be active
+ * while its message is streaming, which keeps a spinner from outliving a run that died.
+ */
+export function isToolActive(t: ToolPart, message?: Message): boolean {
+  if (message && message.status !== undefined && message.status !== "streaming") return false
   return t.state === "input-streaming" || t.state === "input-available" || t.state === "running"
 }
 

@@ -176,7 +176,7 @@ ai-kit is headless. From `useChat` / `useAssistant`:
 - State: `path` (active branch messages), `status` (`idle | loading | submitted | streaming | awaiting-input | error`), `isRunning`, `error`, `pending`, `contextUsage`.
 - Actions: `send(text | parts, { context })`, `stop()`, `approve(id, { remember })`, `deny(id, message)`, `submitToolOutput`, `regenerate`, `edit`, `versions`/`switchBranch` ("2 / 3"), `fork`, `reset`.
 - Messages have `parts`: `text`, `reasoning`, `tool` (`toolName`, `input`, `output`, `state`: `input-streaming | input-available | awaiting-approval | awaiting-output | running | output-available | output-error | denied`), `file`, `data`.
-- Helpers: `segments(message)` groups parts for display (tool runs as one trace, code-mode and subagent calls nested), `<MessageParts render={{ text, reasoning, tools, tool: { name: fn }, data }}>`, `toolLabel(t)`, `isToolActive(t)`, `toolDuration(t)`, `toolInput(t)` (parsed partial input while it streams, for live previews), `todosOf(path)`, `textOf(message)` (core), `composeParts(text, files)`.
+- Helpers: `segments(message)` groups parts for display (tool runs as one trace, code-mode and subagent calls nested), `<MessageParts render={{ text, reasoning, tools, tool: { name: fn }, data }}>`, `toolLabel(t)`, `isToolActive(t, message)`, `toolDuration(t)`, `toolInput(t)` (parsed partial input while it streams, for live previews), `todosOf(path)`, `textOf(message)` (core), `composeParts(text, files)`.
 - Patterns with components (message scroller, tool traces, approval cards, `Questionnaire` for `ask_user`, context meter, versions): copy from `examples/react-chat/src/App.tsx`.
 - Svelte: `new Chat({ transport: httpTransport() })` from `ai-kit-client` is a Svelte store: `$chat.path`.
 

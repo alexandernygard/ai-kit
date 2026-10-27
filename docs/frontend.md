@@ -71,7 +71,7 @@ const { agents } = useAgents()
 }} />
 ```
 
-Helpers: `toolLabel(t)` ("Booking DY612 (needs approval)"), `isToolActive(t)`, `toolDuration(t)`, `todosOf(path)`, `sourcesOf(message)`.
+Helpers: `toolLabel(t)` ("Booking DY612 (needs approval)"), `isToolActive(t, message)` (false once the message stopped streaming), `toolDuration(t)`, `todosOf(path)`, `sourcesOf(message)`.
 
 ## Patterns with @alexandernygard/components
 

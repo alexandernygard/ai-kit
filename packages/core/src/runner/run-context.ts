@@ -3,7 +3,7 @@ import { type Driver, driverLabel } from "../driver"
 import type { AgentEvent, FinishReason } from "../events"
 import type { HookContext } from "../hooks"
 import { createId, now } from "../id"
-import type { Message } from "../messages"
+import { closeOpenParts, type Message } from "../messages"
 import { NUDGE_PART } from "../context"
 import { reduceMessage } from "../reducer"
 import type { Run } from "../run"
@@ -34,6 +34,8 @@ export class RunContext {
   private readonly pendingEvents: Array<{ seq: number; runId: string; event: AgentEvent }> = []
   private flushTimer?: ReturnType<typeof setTimeout>
   private flushChain: Promise<void> = Promise.resolve()
+  private leaseTimer?: ReturnType<typeof setInterval>
+  private leaseChain: Promise<unknown> = Promise.resolve()
   private readonly partIds = new Map<string, string>()
   /** Every tool callable this step, by name. */
   tools = new Map<string, Tool>()
@@ -163,7 +165,8 @@ export class RunContext {
     try {
       if (userMessage) await this.host.store.putMessage(session.id, userMessage)
       await this.saveMessage()
-      await this.host.store.updateSession(session.id, { headId: this.message.id, activeRunId: this.run.id })
+      await this.host.store.updateSession(session.id, { headId: this.message.id, activeRunId: this.run.id, activeRunLeaseUntil: now() + this.host.runLeaseMs })
+      this.startLease()
       this.emit({
         type: "run-start",
         runId: this.run.id,
@@ -192,14 +195,8 @@ export class RunContext {
 
   private async finalize() {
     const reason = this.finishReason
-    // Close anything left streaming.
-    const parts = this.message.parts.map((p) => {
-      if ((p.type === "text" || p.type === "reasoning") && p.state === "streaming") return { ...p, state: "done" as const }
-      if (p.type === "tool" && ["input-streaming", "input-available", "running"].includes(p.state)) {
-        return { ...p, state: "output-error" as const, error: reason === "aborted" ? "Stopped." : "Didn't finish.", endedAt: now() }
-      }
-      return p
-    })
+    await this.stopLease()
+    const parts = closeOpenParts(this.message.parts, reason === "aborted" ? "Stopped." : "Didn't finish.")
     const status: Message["status"] =
       reason === "awaiting-input" ? "awaiting-input" : reason === "error" ? "error" : reason === "aborted" ? "aborted" : "complete"
     this.message = { ...this.message, parts, status, usage: this.usage }
@@ -207,7 +204,7 @@ export class RunContext {
     this.emit({ type: "run-finish", finishReason: reason, usage: this.usage, output: this.output, message: finalMessage })
     try {
       await this.saveMessage()
-      const patch: Partial<SessionRecord> = { activeRunId: null, headId: this.message.id }
+      const patch: Partial<SessionRecord> = { activeRunId: null, activeRunLeaseUntil: null, headId: this.message.id }
       if (this.stateDirty) patch.state = this.state
       const updated = await this.host.store.updateSession(this.input.session.id, patch)
       if (this.input.userMessage && !updated.title && reason !== "error") {
@@ -230,6 +227,25 @@ export class RunContext {
       usage: this.usage,
       error: this.error,
     })
+  }
+
+  /**
+   * Renew the session's lease a few times per lease period so other processes can tell this
+   * run is alive. Renewals are chained, and `stopLease` waits for the last one, so a renewal
+   * never lands after `finalize` clears the active run.
+   */
+  private startLease() {
+    const lease = this.host.runLeaseMs
+    this.leaseTimer = setInterval(() => {
+      this.leaseChain = this.leaseChain
+        .then(() => this.host.store.updateSession(this.input.session.id, { activeRunLeaseUntil: now() + lease }))
+        .catch(() => {})
+    }, Math.max(lease / 3, 100))
+  }
+
+  private stopLease() {
+    clearInterval(this.leaseTimer)
+    return this.leaseChain
   }
 
   // ----------------------------------------------------------------------------------------

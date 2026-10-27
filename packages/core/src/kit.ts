@@ -5,7 +5,7 @@ import type { ModelDriver } from "./driver"
 import type { EventEnvelope } from "./events"
 import { HookRunner, type Hooks } from "./hooks"
 import { createId, now } from "./id"
-import { type Message, textOf, type UserContent } from "./messages"
+import { closeOpenParts, type Message, textOf, type UserContent } from "./messages"
 import { mergePermissions, type Permissions } from "./permissions"
 import { type Plugin, type ResolvedPlugin, resolvePlugin } from "./plugin"
 import { Run, type RunResult } from "./run"
@@ -47,6 +47,12 @@ export interface KitOptions<Ctx = any> {
   title?: false | "first-message" | ModelDriver
   /** Store run events so clients can reconnect mid-run. Default true when the store supports it. */
   persistEvents?: boolean
+  /**
+   * How long a run's lease on its session lasts, in ms. A running agent renews it; when it
+   * lapses (the process crashed, restarted or the page reloaded), the next load ends the run
+   * and marks its unfinished tool calls as interrupted. Default 15 seconds.
+   */
+  runLeaseMs?: number
 }
 
 export interface CreateSessionOptions {
@@ -102,6 +108,7 @@ export class Kit<Ctx = any> {
       pricing: this.pricing,
       contextWindows: { ...defaultContextWindows, ...options.contextWindows },
       persistEvents: options.persistEvents ?? !!this.store.appendEvents,
+      runLeaseMs: options.runLeaseMs ?? 15_000,
       resolve: (name) => this.resolve(name),
       registerRun: (r) => this.runs.set(r.id, r),
       unregisterRun: (r) => this.unregisterRun(r),
@@ -225,7 +232,27 @@ export class Kit<Ctx = any> {
 
   async getSession(id: string): Promise<Session<Ctx> | null> {
     const rec = await this.store.getSession(id)
-    return rec ? new Session(this, rec) : null
+    return rec ? new Session(this, await this.recoverSession(rec)) : null
+  }
+
+  /**
+   * @internal End a run that died without finishing: its session still names it as active,
+   * it isn't running here, and its lease has lapsed. Unfinished tool calls fail as
+   * interrupted; calls waiting on the user stay, so the session can be resumed.
+   */
+  async recoverSession(rec: SessionRecord): Promise<SessionRecord> {
+    if (!rec.activeRunId || this.runs.has(rec.activeRunId)) return rec
+    if (rec.activeRunLeaseUntil && rec.activeRunLeaseUntil > now()) return rec
+    for (const m of await this.store.getMessages(rec.id)) {
+      if (m.role !== "assistant" || m.status !== "streaming") continue
+      const parts = closeOpenParts(m.parts, "Interrupted.")
+      const waiting = parts.some((p) => p.type === "tool" && (p.state === "awaiting-approval" || p.state === "awaiting-output"))
+      await this.store.putMessage(rec.id, { ...m, parts, status: waiting ? "awaiting-input" : "aborted" })
+    }
+    // Another process may have started a run meanwhile; leave its claim alone.
+    const latest = await this.store.getSession(rec.id)
+    if (!latest || latest.activeRunId !== rec.activeRunId) return latest ?? rec
+    return this.store.updateSession(rec.id, { activeRunId: null, activeRunLeaseUntil: null })
   }
 
   async listSessions(query: ListSessionsQuery = {}) {

@@ -194,6 +194,20 @@ export function pendingToolParts(message: Message | undefined): ToolPart[] {
 }
 
 /**
+ * End everything a run left in progress: streaming text is marked done and tool calls that
+ * never got a result fail with `error`. Calls waiting on approvals or client tools stay as they are.
+ */
+export function closeOpenParts(parts: Part[], error: string): Part[] {
+  return parts.map((p) => {
+    if ((p.type === "text" || p.type === "reasoning") && p.state === "streaming") return { ...p, state: "done" as const }
+    if (p.type === "tool" && (p.state === "input-streaming" || p.state === "input-available" || p.state === "running")) {
+      return { ...p, state: "output-error" as const, error, inputText: undefined, endedAt: now() }
+    }
+    return p
+  })
+}
+
+/**
  * The messages from the root to `headId`, following `parentId`.
  * This is the conversation the model sees.
  */

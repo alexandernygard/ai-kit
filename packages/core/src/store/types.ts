@@ -20,6 +20,11 @@ export interface SessionRecord {
   metadata?: Record<string, unknown>
   /** Set while a run is active. */
   activeRunId?: string | null
+  /**
+   * The active run renews this while it's alive. Once it has passed, the run is treated as
+   * dead (its process crashed or was reloaded) and the session is recovered on next load.
+   */
+  activeRunLeaseUntil?: number | null
   createdAt: number
   updatedAt: number
 }

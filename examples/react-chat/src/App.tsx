@@ -214,7 +214,7 @@ function AssistantMessage({ message, chat }: { message: Message; chat: UseChatRe
                 </TraceCollapsible>
               </Trace>
             ),
-            tools: (tools) => <ToolTrace tools={tools} chat={chat} />,
+            tools: (tools, message) => <ToolTrace tools={tools} message={message} chat={chat} />,
             tool: {
               ask_user: (t) => <AskUser call={t} chat={chat} />,
             },
@@ -250,13 +250,13 @@ function AssistantMessage({ message, chat }: { message: Message; chat: UseChatRe
 
 const icons: Record<string, typeof WrenchIcon> = { run_code: CodeIcon, task: UsersIcon }
 
-function ToolTrace({ tools, chat }: { tools: ToolNode[]; chat: UseChatResult }) {
+function ToolTrace({ tools, message, chat }: { tools: ToolNode[]; message: Message; chat: UseChatResult }) {
   return (
     <Trace>
       {tools.map((t) => {
         const Icon = icons[t.toolName] ?? WrenchIcon
         const seconds = toolDuration(t)
-        const status = isToolActive(t) ? "running" : t.state === "output-error" || t.state === "denied" ? "error" : undefined
+        const status = isToolActive(t, message) ? "running" : t.state === "output-error" || t.state === "denied" ? "error" : undefined
         return (
           <div key={t.toolCallId} className="flex flex-col gap-2">
             <TraceCollapsible>
@@ -278,7 +278,7 @@ function ToolTrace({ tools, chat }: { tools: ToolNode[]; chat: UseChatResult }) 
                     <CodeBlockContent wrap>{t.error ?? (typeof t.output === "string" ? t.output : JSON.stringify(t.output, null, 2))}</CodeBlockContent>
                   </CodeBlock>
                 )}
-                {t.children.length > 0 && <ToolTrace tools={t.children} chat={chat} />}
+                {t.children.length > 0 && <ToolTrace tools={t.children} message={message} chat={chat} />}
                 {t.child && <p className="text-sm text-muted-foreground">{t.child.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}</p>}
               </TraceCollapsibleContent>
             </TraceCollapsible>

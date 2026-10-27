@@ -97,3 +97,9 @@ Or implement `Store` yourself: eight methods, plus two optional ones. The option
 ## Reconnecting
 
 Every event has a `seq`. Clients reconnect with `GET /runs/:runId/events?after=<seq>&session=<id>`, which reads live from memory, or from the store's event log when the run is elsewhere or finished. `Chat` does this on its own when a stream drops, and when you open a session that has a run in progress.
+
+A stream that closes without `run-finish` counts as a drop too. If reconnecting doesn't bring the run back, `Chat` checks the session until it no longer names the run as active, then shows what's stored.
+
+## Runs that die
+
+A run holds a lease on its session (`activeRunLeaseUntil`) and renews it while it's alive. If its process crashes, restarts or the page reloads, the lease lapses (`runLeaseMs`, 15 seconds by default). The next time anything loads the session, ai-kit ends the run: tool calls that never got a result fail with "Interrupted.", the message becomes `aborted`, and the session can take new messages again. Calls that were waiting on approvals or client tools stay pending, so the session can be resumed. Sending to a session whose run is alive in another process fails rather than interrupting it.
