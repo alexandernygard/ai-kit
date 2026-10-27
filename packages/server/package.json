@@ -1,6 +1,6 @@
 {
   "name": "@alexandernygard/ai-kit-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HTTP API for ai-kit on Web-standard Request/Response: Hono, Next.js, SvelteKit, Cloudflare Workers, Bun, Deno, Node.",
   "type": "module",
   "license": "MIT",

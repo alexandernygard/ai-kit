@@ -1,6 +1,6 @@
 {
   "name": "@alexandernygard/ai-kit-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browser client for ai-kit: typed API, streaming, reconnects, and a framework-agnostic chat controller (works as a Svelte store).",
   "type": "module",
   "license": "MIT",

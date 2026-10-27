@@ -1,6 +1,6 @@
 {
   "name": "@alexandernygard/ai-kit-node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node.js pieces for ai-kit: file store, SKILL.md loader, worker sandbox for code mode, file and shell tools, node:http adapter.",
   "type": "module",
   "license": "MIT",
