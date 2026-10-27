@@ -59,7 +59,7 @@ export type AgentEvent =
 /** How full the context window is. Sent before each model call (estimate) and after it (provider count). */
 export interface ContextUsage {
   step: number
-  /** Tokens in the request: system, tools and messages (plus the reply, for provider counts). */
+  /** Tokens in the request: system, tools, messages and context (plus the reply, for provider counts). */
   tokens: number
   /** The model's context window. */
   window: number
@@ -67,8 +67,13 @@ export interface ContextUsage {
   ratio: number
   /** `estimate` before the call (about 4 characters a token); `provider` once the model reported usage. */
   source: "estimate" | "provider"
-  /** Estimated tokens by section; `context` lists each context provider. */
-  breakdown?: { system: number; tools: number; messages: number; context: Array<{ name: string; tokens: number }> }
+  /**
+   * Tokens by section. The sections don't overlap and add up to `tokens`: `messages` leaves out
+   * context, `context` lists each provider's text stored in the history, and `output` is the reply
+   * (0 for estimates; missing from readings stored before it was added). Provider readings scale
+   * the estimate's sections to the measured prompt.
+   */
+  breakdown?: { system: number; tools: number; messages: number; context: Array<{ name: string; tokens: number }>; output?: number }
   /** Compaction kicks in at this ratio. */
   compactAt?: number
 }

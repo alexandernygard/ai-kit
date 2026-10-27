@@ -53,11 +53,12 @@ Every model call reports how full the context window is. A `context-usage` event
   ratio: 0.003,
   source: "estimate" | "provider",
   compactAt: 0.8,                 // when compaction starts; absent when compaction is off
-  breakdown: { system: 812, tools: 640, messages: 1467, context: [{ name: "user", tokens: 38 }] },
+  breakdown: { system: 812, tools: 640, messages: 1429, context: [{ name: "user", tokens: 38 }], output: 0 },
 }
 ```
 
-- Estimates count about four characters per token. Provider counts are input (cached or not) plus output.
+- The breakdown's sections don't overlap and add up to `tokens`. `messages` leaves out context, `context` counts every copy of a provider's text still in the history (a board stored on each turn it changed counts each time), and `output` is the reply.
+- Estimates count about four characters per token. Provider counts are input (cached or not) plus output, and their breakdown is the estimate scaled to the measured prompt, so it stays consistent with the total.
 - The latest reading is also stored on the assistant message (`message.contextUsage`). `Chat` exposes it as `state.contextUsage`, and `contextUsageOf(messages)` finds it.
 - The window comes from `compaction.contextWindow`, then the driver (`capabilities.contextWindow`), then a table by model id (Claude models built in; add others with `createKit({ contextWindows: { "acme-": 128_000 } })`), and finally 200 000.
 

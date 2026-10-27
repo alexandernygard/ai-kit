@@ -10,6 +10,7 @@ import {
   tool,
   toModelTurns,
   type AgentEvent,
+  type ContextUsage,
   type Message,
   type ModelTurn,
 } from "../src/index"
@@ -182,12 +183,32 @@ describe("context usage", () => {
     expect(est.breakdown!.system).toBe(100)
     // 80 characters plus the <context name="user"> wrapper.
     expect(est.breakdown!.context).toEqual([{ name: "user", tokens: Math.ceil(`<context name="user">\n${"y".repeat(80)}\n</context>`.length / 4) }])
-    expect(est.tokens).toBe(est.breakdown!.system + est.breakdown!.tools + est.breakdown!.messages)
+    expect(est.breakdown!.output).toBe(0)
+    expect(est.tokens).toBe(sections(est.breakdown!))
     expect(usage[1]).toMatchObject({ tokens: 10_000, ratio: 0.1 })
+    // The provider's count is split in the estimate's proportions, plus the reply.
+    const measured = usage[1]!.breakdown!
+    expect(measured.output).toBe(100)
+    expect(sections(measured)).toBe(10_000)
+    expect(measured.system / (measured.system + measured.tools + measured.messages)).toBeCloseTo(est.breakdown!.system / (est.tokens - est.breakdown!.context[0]!.tokens), 2)
 
     const msg = (await run.result).message
-    // The stored message keeps the latest reading, with the estimate's breakdown.
-    expect(msg.contextUsage).toMatchObject({ source: "provider", tokens: 10_000, breakdown: { system: 100 } })
+    expect(msg.contextUsage).toMatchObject({ source: "provider", tokens: 10_000 })
+  })
+
+  it("counts every stored copy of a context once, outside messages", async () => {
+    const model = mockModel([{ text: "one" }, { text: "two" }])
+    let n = 0
+    const kit = createKit({ agents: [defineAgent({ name: "a", model, contextProviders: [defineContext({ name: "board", get: () => `board ${++n} ${"z".repeat(396)}` })] })] })
+    const session = await kit.createSession()
+    await session.send("first").result
+    const events = await collect(session.send("second"))
+    const est = events.find((e): e is Extract<AgentEvent, { type: "context-usage" }> => e.type === "context-usage" && e.source === "estimate")!
+    // Two board snapshots are in the history now, about 110 tokens each with the wrapper.
+    expect(est.breakdown!.context).toHaveLength(1)
+    expect(est.breakdown!.context[0]!.tokens).toBeGreaterThan(200)
+    expect(est.breakdown!.messages).toBeLessThan(est.breakdown!.context[0]!.tokens)
+    expect(est.tokens).toBe(sections(est.breakdown!))
   })
 
   it("finds the window from the model id, and lets the kit override it", async () => {
@@ -250,3 +271,7 @@ describe("append-only requests", () => {
     expect(JSON.stringify(toModelTurns(path))).toContain("thinking a3")
   })
 })
+
+function sections(b: NonNullable<ContextUsage["breakdown"]>) {
+  return b.system + b.tools + b.messages + b.context.reduce((n, c) => n + c.tokens, 0) + (b.output ?? 0)
+}

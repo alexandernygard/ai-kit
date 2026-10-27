@@ -12,7 +12,7 @@ import { renderContext, type ResolvedContext } from "../context-providers"
 import type { Driver, ModelDriver, ModelRequest } from "../driver"
 import type { ContextUsage } from "../events"
 import { createId } from "../id"
-import type { DataPart } from "../messages"
+import type { DataPart, Message } from "../messages"
 import { toModelOutput } from "../tools"
 import { contextWindowFor, type Usage } from "../usage"
 import type { RunContext } from "./run-context"
@@ -110,22 +110,58 @@ function compactAt(rc: RunContext): number | undefined {
   return rc.agent.compaction?.threshold ?? 0.8
 }
 
-export function emitEstimate(rc: RunContext, step: number, request: ModelRequest, contexts: ResolvedContext[]) {
+export function emitEstimate(rc: RunContext, step: number, request: ModelRequest): NonNullable<ContextUsage["breakdown"]> {
   const system = estimateTokens(request.system.map((b) => b.text).join("\n"))
   const tools = estimateTokens(request.tools)
-  const messages = estimateTokens(request.messages)
-  emitUsage(rc, {
-    step,
-    tokens: system + tools + messages,
-    source: "estimate",
-    breakdown: { system, tools, messages, context: contexts.map((c) => ({ name: c.name, tokens: estimateTokens(c.text) })) },
-  })
+  // Context lives in the message history, so it's taken out of `messages` to keep the sections apart.
+  const context = contextTokens(rc.path(), rc.state[COMPACTION_KEY] as CompactionState | undefined)
+  const inContext = context.reduce((n, c) => n + c.tokens, 0)
+  const messages = Math.max(0, estimateTokens(request.messages) - inContext)
+  const breakdown = { system, tools, messages, context, output: 0 }
+  emitUsage(rc, { step, tokens: system + tools + messages + inContext, source: "estimate", breakdown })
+  return breakdown
 }
 
-/** What the provider counted: the whole prompt (cached or not) plus the reply. */
-export function emitMeasured(rc: RunContext, step: number, usage: Usage) {
-  const tokens = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0) + usage.outputTokens
-  if (tokens > 0) emitUsage(rc, { step, tokens, source: "provider" })
+/**
+ * What the provider counted: the whole prompt (cached or not) plus the reply. The estimate's
+ * sections are scaled to the measured prompt so they still add up to `tokens`.
+ */
+export function emitMeasured(rc: RunContext, step: number, usage: Usage, estimate: NonNullable<ContextUsage["breakdown"]>) {
+  const input = usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+  const tokens = input + usage.outputTokens
+  if (tokens <= 0) return
+  const [system, tools, messages, ...context] = apportion(input, [estimate.system, estimate.tools, estimate.messages, ...estimate.context.map((c) => c.tokens)])
+  const breakdown = { system: system!, tools: tools!, messages: messages!, context: estimate.context.map((c, i) => ({ name: c.name, tokens: context[i]! })), output: usage.outputTokens }
+  emitUsage(rc, { step, tokens, source: "provider", breakdown })
+}
+
+/** Split `total` in proportion to `weights`, rounding so the parts add up exactly (largest remainder). */
+function apportion(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0)
+  if (sum <= 0) return weights.map((_, i) => (i === 0 ? total : 0))
+  const exact = weights.map((w) => (w / sum) * total)
+  const parts = exact.map(Math.floor)
+  let left = total - parts.reduce((a, b) => a + b, 0)
+  const order = exact.map((x, i) => [x - Math.floor(x), i] as const).sort((a, b) => b[0] - a[0])
+  for (const [, i] of order) {
+    if (left-- <= 0) break
+    parts[i]!++
+  }
+  return parts
+}
+
+/** Tokens of the context stored in the history the model sees, by provider, in first-seen order. */
+function contextTokens(path: Message[], compaction: CompactionState | undefined): Array<{ name: string; tokens: number }> {
+  const from = compaction ? path.findIndex((m) => m.id === compaction.uptoMessageId) + 1 : 0
+  const totals = new Map<string, number>()
+  for (const m of path.slice(from)) {
+    for (const p of m.parts) {
+      if (p.type !== "data" || p.name !== CONTEXT_PART) continue
+      const c = p.data as ContextPartData
+      totals.set(c.name, (totals.get(c.name) ?? 0) + estimateTokens(c.text))
+    }
+  }
+  return [...totals].map(([name, tokens]) => ({ name, tokens }))
 }
 
 function emitUsage(rc: RunContext, u: Omit<ContextUsage, "window" | "ratio" | "compactAt">) {

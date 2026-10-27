@@ -55,13 +55,13 @@ export async function runModel(rc: RunContext, driver: ModelDriver) {
 
     const stepIndex = rc.step++
     rc.emit({ type: "step-start", step: stepIndex })
-    emitEstimate(rc, stepIndex, request, contexts)
+    const estimate = emitEstimate(rc, stepIndex, request)
     const { calls, finishReason, usage } = await streamStep(rc, driver, request, stepIndex)
     const stepUsage = rc.priced(usage, driver)
     rc.usage = addUsage(rc.usage, stepUsage)
     rc.message = { ...rc.message, usage: rc.usage }
     rc.emit({ type: "step-finish", step: stepIndex, usage: stepUsage, finishReason })
-    emitMeasured(rc, stepIndex, usage)
+    emitMeasured(rc, stepIndex, usage, estimate)
     await rc.resolved.hooks.notify("afterModelCall", { step: stepIndex, finishReason, usage: stepUsage, toolCalls: calls }, rc.hookCtx)
 
     if (finishReason === "content-filter") return rc.end("content-filter")
