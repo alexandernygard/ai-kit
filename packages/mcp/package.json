@@ -1,6 +1,6 @@
 {
   "name": "@alexandernygard/ai-kit-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP for ai-kit: use MCP servers as toolkits, and expose ai-kit tools as an MCP server.",
   "type": "module",
   "license": "MIT",

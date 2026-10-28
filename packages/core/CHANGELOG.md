@@ -1,5 +1,11 @@
 # @alexandernygard/ai-kit
 
+## 0.3.0
+
+### Minor Changes
+
+- 521338b: Context usage breakdowns now add up to the total. `messages` no longer includes context, `context` counts every stored copy of a provider's text, provider readings scale the estimate to the measured prompt, and the reply is reported as `output`.
+
 ## 0.2.0
 
 ### Minor Changes

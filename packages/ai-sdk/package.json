@@ -1,6 +1,6 @@
 {
   "name": "@alexandernygard/ai-kit-ai-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ai-kit model driver for the AI SDK: Anthropic, OpenAI, Google, Gateway and every other AI SDK provider.",
   "type": "module",
   "license": "MIT",
